@@ -82,7 +82,12 @@ Người dùng nhập từ khóa
 | Thư viện | Mục đích |
 |----------|----------|
 | streamlit | Web UI framework |
-| equests | Gọi Unsplash REST API |
+| 
+equests | Gọi Unsplash REST API |
 | python-dotenv | Đọc API key từ file .env |
 | deep-translator | Dịch Tiếng Việt → Tiếng Anh |
 | sqlite3 | Cache database (built-in Python) |
+
+
+đường dẫn:
+https://loc2207.streamlit.app/
