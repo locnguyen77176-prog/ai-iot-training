@@ -54,7 +54,12 @@ Lưu ý:
 
 ```
 STT_To_TTS/
-├── app.py              # FastAPI Backend (GPU Whisper STT, gemini-3.5-flash-lite, Edge-TTS)
+├── app/                # Package chứa mã nguồn backend
+│   ├── main.py         # Khởi tạo ứng dụng FastAPI
+│   ├── core/           # Cấu hình và thiết lập môi trường
+│   ├── models/         # Pydantic schemas 
+│   ├── services/       # Logic nghiệp vụ (STT, TTS, Translation, Audio)
+│   └── api/            # Định nghĩa các API routes
 ├── index.html          # Frontend giao diện người dùng (Single-page Web UI)
 ├── run.py              # Script khởi chạy ứng dụng uvicorn
 ├── requirements.txt    # Các thư viện Python cần thiết

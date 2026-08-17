@@ -123,6 +123,61 @@
             box-shadow: 0 0 10px var(--primary-emerald);
         }
 
+        /* Language Swap Bar */
+        .lang-selector-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 12px 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        .lang-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid var(--panel-border);
+            padding: 8px 18px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--text-main);
+            min-width: 140px;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .swap-lang-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary-emerald), var(--primary-cyan));
+            border: none;
+            color: white;
+            font-size: 1.3rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 15px var(--primary-glow);
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .swap-lang-btn:hover {
+            transform: scale(1.12);
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.5);
+        }
+
+        .swap-lang-btn.rotated {
+            transform: rotate(180deg) scale(1.1);
+        }
+
 
 
         /* Mode Navigation Tabs */
@@ -578,6 +633,23 @@
 
 
 
+        <!-- Language Direction Selector Bar -->
+        <div class="lang-selector-bar">
+            <div class="lang-badge" id="sourceLangBadge">
+                <span class="lang-flag" id="sourceFlag">🇻🇳</span>
+                <span class="lang-name" id="sourceName">Tiếng Việt</span>
+            </div>
+            
+            <button class="swap-lang-btn" id="swapLangBtn" title="Nhấn để đổi hướng dịch (Tiếng Việt ⇄ Tiếng Anh)">
+                <span>⇄</span>
+            </button>
+            
+            <div class="lang-badge" id="targetLangBadge">
+                <span class="lang-flag" id="targetFlag">🇺🇸</span>
+                <span class="lang-name" id="targetName">Tiếng Anh</span>
+            </div>
+        </div>
+
         <!-- Mode Selection Tabs -->
         <div class="nav-tabs">
             <button class="tab-btn active" data-tab="voice">🎙️ Dịch Giọng Nói (Voice Mode)</button>
@@ -609,10 +681,10 @@
 
                 <!-- Voice Mode Results -->
                 <div class="results-container" id="voiceResults" style="display: none;">
-                    <!-- Vietnamese STT Card -->
+                    <!-- Source Audio/STT Card -->
                     <div class="result-box">
                         <div class="result-header">
-                            <span class="result-title">Tiếng Việt</span>
+                            <span class="result-title" id="voiceSourceTitle">Tiếng Việt (Nguồn)</span>
                             <button class="copy-btn" onclick="copyText('voiceViText')">📋 Sao chép</button>
                         </div>
                         <div class="result-text" id="voiceViText">---</div>
@@ -622,10 +694,10 @@
                         </div>
                     </div>
 
-                    <!-- English Translation Card -->
+                    <!-- Target Translation Card -->
                     <div class="result-box" style="border-color: rgba(16, 185, 129, 0.3);">
                         <div class="result-header">
-                            <span class="result-title" style="color: var(--primary-emerald);">Tiếng Anh</span>
+                            <span class="result-title" id="voiceTargetTitle" style="color: var(--primary-emerald);">Tiếng Anh (Bản dịch)</span>
                             <button class="copy-btn" onclick="copyText('voiceEnText')">📋 Sao chép</button>
                         </div>
                         <div class="result-text" id="voiceEnText">---</div>
@@ -648,8 +720,8 @@
             <!-- Text Mode Pane -->
             <div class="tab-pane" id="textPane">
                 <div class="text-input-group">
-                    <label style="font-size: 0.88rem; font-weight: 600; color: var(--text-accent);">Nhập văn bản Tiếng Việt:</label>
-                    <textarea id="textInput" placeholder=""></textarea>
+                    <label id="textInputLabel" style="font-size: 0.88rem; font-weight: 600; color: var(--text-accent);">Nhập văn bản Tiếng Việt:</label>
+                    <textarea id="textInput" placeholder="Nhập văn bản tiếng Việt..."></textarea>
                 </div>
 
                 <div class="action-bar">
@@ -667,7 +739,7 @@
                 <div class="results-container" id="textResults" style="display: none;">
                     <div class="result-box" style="border-color: rgba(6, 182, 212, 0.3);">
                         <div class="result-header">
-                            <span class="result-title" style="color: var(--primary-cyan);">Tiếng Anh</span>
+                            <span class="result-title" id="textTargetTitle" style="color: var(--primary-cyan);">Tiếng Anh (Bản dịch)</span>
                             <button class="copy-btn" onclick="copyText('textEnText')">📋 Sao chép</button>
                         </div>
                         <div class="result-text" id="textEnText">---</div>
@@ -694,6 +766,7 @@
 
     <script>
         // System State & Variables
+        let currentDirection = 'vi-en'; // 'vi-en' or 'en-vi'
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
@@ -721,12 +794,23 @@
         const voiceAudioPlayer = document.getElementById('voiceAudioPlayer');
 
         const textInput = document.getElementById('textInput');
-        const translateTextBtn = document.getElementById('translateTextBtn');
         const clearTextBtn = document.getElementById('clearTextBtn');
         const textSpinner = document.getElementById('textSpinner');
         const textResults = document.getElementById('textResults');
         const textEnText = document.getElementById('textEnText');
         const textAudioPlayer = document.getElementById('textAudioPlayer');
+
+        // Language Selector Elements
+        const swapLangBtn = document.getElementById('swapLangBtn');
+        const sourceFlag = document.getElementById('sourceFlag');
+        const sourceName = document.getElementById('sourceName');
+        const targetFlag = document.getElementById('targetFlag');
+        const targetName = document.getElementById('targetName');
+        const voiceSourceTitle = document.getElementById('voiceSourceTitle');
+        const voiceTargetTitle = document.getElementById('voiceTargetTitle');
+        const textInputLabel = document.getElementById('textInputLabel');
+        const translateTextBtn = document.getElementById('translateTextBtn');
+        const textTargetTitle = document.getElementById('textTargetTitle');
 
         // Init Load
         document.addEventListener('DOMContentLoaded', () => {
@@ -884,7 +968,7 @@
             recordBtn.classList.remove('recording');
             recordBtn.innerHTML = '🎙️';
             pulseRing.style.display = 'none';
-            recordHint.textContent = 'Nhấn nút micro để bắt đầu thu âm Tiếng Việt';
+            recordHint.textContent = currentDirection === 'vi-en' ? 'Nhấn nút micro để bắt đầu thu âm Tiếng Việt' : 'Nhấn nút micro để bắt đầu thu âm Tiếng Anh';
 
             mediaRecorder.stop();
             mediaRecorder.stream.getTracks().forEach(track => track.stop());
@@ -895,6 +979,44 @@
             };
         }
 
+        // Swap Language Handler
+        swapLangBtn.addEventListener('click', toggleLanguageDirection);
+
+        function toggleLanguageDirection() {
+            swapLangBtn.classList.toggle('rotated');
+            currentDirection = (currentDirection === 'vi-en') ? 'en-vi' : 'vi-en';
+
+            if (currentDirection === 'vi-en') {
+                sourceFlag.textContent = '🇻🇳';
+                sourceName.textContent = 'Tiếng Việt';
+                targetFlag.textContent = '🇺🇸';
+                targetName.textContent = 'Tiếng Anh';
+
+                voiceSourceTitle.textContent = 'Tiếng Việt (Nguồn)';
+                voiceTargetTitle.textContent = 'Tiếng Anh (Bản dịch)';
+                textInputLabel.textContent = 'Nhập văn bản Tiếng Việt:';
+                textInput.placeholder = 'Nhập văn bản tiếng Việt...';
+                translateTextBtn.innerHTML = '🚀 Dịch sang Tiếng Anh';
+                textTargetTitle.textContent = 'Tiếng Anh (Bản dịch)';
+                recordHint.textContent = 'Nhấn nút micro để bắt đầu thu âm Tiếng Việt';
+                showToast('🔄 Đã chuyển sang hướng dịch: Tiếng Việt ➔ Tiếng Anh');
+            } else {
+                sourceFlag.textContent = '🇺🇸';
+                sourceName.textContent = 'Tiếng Anh';
+                targetFlag.textContent = '🇻🇳';
+                targetName.textContent = 'Tiếng Việt';
+
+                voiceSourceTitle.textContent = 'Tiếng Anh (Nguồn)';
+                voiceTargetTitle.textContent = 'Tiếng Việt (Bản dịch)';
+                textInputLabel.textContent = 'Nhập văn bản Tiếng Anh:';
+                textInput.placeholder = 'Enter English text...';
+                translateTextBtn.innerHTML = '🚀 Dịch sang Tiếng Việt';
+                textTargetTitle.textContent = 'Tiếng Việt (Bản dịch)';
+                recordHint.textContent = 'Nhấn nút micro để bắt đầu thu âm Tiếng Anh';
+                showToast('🔄 Đã chuyển sang hướng dịch: Tiếng Anh ➔ Tiếng Việt');
+            }
+        }
+
         // Voice Translation API Call
         async function sendVoiceForTranslation(blob) {
             voiceSpinner.style.display = 'flex';
@@ -902,8 +1024,8 @@
 
             const formData = new FormData();
             formData.append('audio', blob, 'recording.webm');
-            
-
+            formData.append('source_lang', currentDirection === 'vi-en' ? 'vi' : 'en');
+            formData.append('target_lang', currentDirection === 'vi-en' ? 'en' : 'vi');
 
             try {
                 const res = await fetch('/api/voice-translate', {
@@ -973,7 +1095,8 @@
         async function translateText() {
             const text = textInput.value.trim();
             if (!text) {
-                showToast('⚠️ Vui lòng nhập văn bản tiếng Việt cần dịch!');
+                const srcName = currentDirection === 'vi-en' ? 'tiếng Việt' : 'tiếng Anh';
+                showToast(`⚠️ Vui lòng nhập văn bản ${srcName} cần dịch!`);
                 return;
             }
 
@@ -984,7 +1107,11 @@
                 const res = await fetch('/api/text-translate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text })
+                    body: JSON.stringify({
+                        text: text,
+                        source_lang: currentDirection === 'vi-en' ? 'vi' : 'en',
+                        target_lang: currentDirection === 'vi-en' ? 'en' : 'vi'
+                    })
                 });
 
                 const data = await res.json();
