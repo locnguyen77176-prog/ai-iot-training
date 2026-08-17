@@ -10,19 +10,22 @@ compute_type = "float32"
 
 def init_whisper_model():
     global whisper_model, device_name, compute_type
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA không khả dụng. Dịch vụ STT Whisper này bắt buộc chạy trên GPU để tối ưu latency.")
-
-    device_name = "cuda"
-    compute_type = "float16"
-    print(f"Sử dụng thiết bị: {device_name} (compute_type: {compute_type}, model: {WHISPER_MODEL_SIZE})")
+    if torch.cuda.is_available():
+        device_name = "cuda"
+        compute_type = "float16"
+        print(f"Sử dụng thiết bị: {device_name} (compute_type: {compute_type}, model: {WHISPER_MODEL_SIZE})")
+    else:
+        device_name = "cpu"
+        compute_type = "float32"
+        print(f"CUDA không khả dụng. Chuyển sang sử dụng CPU (compute_type: {compute_type}, model: {WHISPER_MODEL_SIZE})")
 
     try:
         start_init = time.perf_counter()
         whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device=device_name, compute_type=compute_type)
-        print(f"Đã nạp thành công Whisper Model '{WHISPER_MODEL_SIZE}' trên GPU trong {time.perf_counter() - start_init:.2f}s!")
+        print(f"Đã nạp thành công Whisper Model '{WHISPER_MODEL_SIZE}' trên {device_name} trong {time.perf_counter() - start_init:.2f}s!")
     except Exception as e:
-        raise RuntimeError(f"Không thể khởi tạo Whisper model '{WHISPER_MODEL_SIZE}' trên GPU: {e}") from e
+        raise RuntimeError(f"Không thể khởi tạo Whisper model '{WHISPER_MODEL_SIZE}': {e}") from e
+
 
 def get_stt_info():
     return {

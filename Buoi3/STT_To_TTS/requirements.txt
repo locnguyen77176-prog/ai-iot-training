@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 fastapi>=0.110.0
 uvicorn>=0.28.0
 python-multipart>=0.0.9
@@ -6,3 +8,4 @@ google-genai>=0.1.0
 edge-tts>=6.1.9
 ffmpeg-python>=0.2.0
 python-dotenv>=1.0.0
+
