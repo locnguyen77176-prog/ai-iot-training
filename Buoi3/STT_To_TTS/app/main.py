@@ -3,11 +3,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# This needs to run before importing other things that might load torch, but we can do it here.
 from app.core.cuda_setup import setup_cuda_dlls
 setup_cuda_dlls()
 
 from app.services.stt import init_whisper_model
+from app.services.tts import init_piper_tts
 from app.api.routes import router
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -15,14 +15,17 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("=== Khởi tạo ứng dụng & nạp Whisper Model... ===")
+    print("=== [1/2] Nạp Faster-Whisper Model trên GPU... ===")
     init_whisper_model()
+    print("=== [2/2] Nạp Piper Local TTS Engine... ===")
+    init_piper_tts()
+    print("=== Hệ thống đã sẵn sàng xử lý yêu cầu! ===")
     yield
     print("=== Đóng ứng dụng ===")
 
 app = FastAPI(
     title="Real-time Vi-En Voice & Text Translation",
-    description="FastAPI + GPU Whisper STT + Gemini 1.5 Flash + Edge-TTS",
+    description="FastAPI + GPU Whisper STT + Gemini 3.5 Flash Lite + Piper Local TTS",
     lifespan=lifespan
 )
 

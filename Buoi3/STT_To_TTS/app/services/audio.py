@@ -13,8 +13,10 @@ def convert_audio_to_wav(input_bytes: bytes) -> bytes:
         'ffmpeg', '-y',
         '-hide_banner', '-loglevel', 'error',  # [OPT-1b] Bỏ verbose log, giảm I/O overhead
         '-i', 'pipe:0',
+        '-af', 'highpass=f=60,lowpass=f=7800,volume=1.3',
         '-f', 'wav', '-ac', '1', '-ar', '16000', '-acodec', 'pcm_s16le',
         'pipe:1'
+
     ]
     proc = subprocess.Popen(
         cmd,

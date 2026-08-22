@@ -14,25 +14,27 @@ _CONFIG_VI_TO_EN = types.GenerateContentConfig(
     system_instruction=(
         "You are a professional translator. "
         "Translate Vietnamese to natural English. "
-        "Return only the translated sentence."
+        "Return only the translated sentence. "
+        "Do not add any extra text or explanations."
     ),
     temperature=0.1,
-    max_output_tokens=256,  # [OPT-3c] Tăng 128→256 để tránh cắt câu dài, giảm retry
+    max_output_tokens=256,
 )
 
 _CONFIG_EN_TO_VI = types.GenerateContentConfig(
     system_instruction=(
         "You are a professional translator. "
         "Translate English to natural Vietnamese. "
-        "Return only the translated sentence."
+        "Return only the translated sentence. "
+        "Do not add any extra text or explanations."
     ),
     temperature=0.1,
     max_output_tokens=256,
 )
 
 # [OPT-3d] Pre-build prompt template, chỉ format text lúc runtime
-_PROMPT_VI_TO_EN = "Translate to natural English, return only the translation:\n{text}"
-_PROMPT_EN_TO_VI = "Dịch sang Tiếng Việt tự nhiên, chỉ trả về câu dịch:\n{text}"
+_PROMPT_VI_TO_EN = "Translate the following Vietnamese text to natural English. Return only the translation, no explanations:\n{text}"
+_PROMPT_EN_TO_VI = "Translate the following English text to natural Vietnamese. Return only the translation, no explanations:\n{text}"
 
 def get_gemini_client(api_key: str) -> genai.Client:
     global gemini_client_cache
@@ -64,10 +66,15 @@ async def translate_text(
     try:
         client = get_gemini_client(key)
 
-        if source_lang == "en" or target_lang == "vi":
+        # Determine translation direction: en->vi or vi->en
+        if source_lang == "en" and target_lang == "vi":
             prompt = _PROMPT_EN_TO_VI.format(text=text)
             config = _CONFIG_EN_TO_VI
+        elif source_lang == "vi" and target_lang == "en":
+            prompt = _PROMPT_VI_TO_EN.format(text=text)
+            config = _CONFIG_VI_TO_EN
         else:
+            # Default: assume vi->en for unsupported language pairs
             prompt = _PROMPT_VI_TO_EN.format(text=text)
             config = _CONFIG_VI_TO_EN
 
@@ -96,3 +103,4 @@ async def translate_text(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Lỗi Gemini Translation API: {str(e)}"
         )
+

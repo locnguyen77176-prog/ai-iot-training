@@ -3,16 +3,17 @@ import time
 import base64
 import asyncio
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException
+from fastapi.responses import HTMLResponse, Response
 
 from app.models.schemas import TextTranslateRequest
 from app.services.audio import convert_audio_to_wav
 from app.services.stt import run_whisper_stt, get_stt_info
 from app.services.translation import translate_text
-from app.services.tts import tts_to_base64
+from app.services.tts import tts_stream_chunks
 
 router = APIRouter()
+
 
 @router.get("/api/health")
 async def health_check():
@@ -22,6 +23,7 @@ async def health_check():
         **stt_info
     }
 
+
 @router.post("/api/text-translate")
 async def text_translate(req: TextTranslateRequest, x_api_key: Optional[str] = Header(None)):
     t_start = time.perf_counter()
@@ -30,27 +32,39 @@ async def text_translate(req: TextTranslateRequest, x_api_key: Optional[str] = H
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Văn bản cần dịch không được để trống.")
     
-    # 1. Dịch văn bản
+    # 1. Dịch văn bản qua Gemini
     t_trans_start = time.perf_counter()
-    translation = await translate_text(req.text, source_lang=req.source_lang, target_lang=req.target_lang, api_key=api_key)
+    try:
+        translation = await translate_text(
+            req.text,
+            source_lang=req.source_lang,
+            target_lang=req.target_lang,
+            api_key=api_key
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi dịch thuật: {str(e)}")
     t_trans = time.perf_counter() - t_trans_start
     
-    # 2. TTS
+    # 2. Tổng hợp giọng nói TTS
     t_tts_start = time.perf_counter()
-    audio_b64 = await tts_to_base64(translation, target_lang=req.target_lang)
+    audio_b64, audio_chunks = await tts_stream_chunks(translation, target_lang=req.target_lang)
     t_tts = time.perf_counter() - t_tts_start
     
     t_total = time.perf_counter() - t_start
     
     return {
         "translation": translation,
-        "audio_b64": f"data:audio/mp3;base64,{audio_b64}" if audio_b64 else "",
+        "audio_b64": f"data:audio/wav;base64,{audio_b64}" if audio_b64 else "",
+        "audio_chunks": [f"data:audio/wav;base64,{c}" for c in audio_chunks] if audio_chunks else [],
         "latency": {
             "translation": round(t_trans, 3),
             "tts": round(t_tts, 3),
             "total": round(t_total, 3)
         }
     }
+
 
 @router.post("/api/voice-translate")
 async def voice_translate(
@@ -63,18 +77,18 @@ async def voice_translate(
     t_start = time.perf_counter()
     resolved_api_key = api_key or x_api_key or os.environ.get("GEMINI_API_KEY")
     
-    # Read audio bytes
+    # Đọc dữ liệu audio
     raw_audio_bytes = await audio.read()
     if not raw_audio_bytes:
         raise HTTPException(status_code=400, detail="File âm thanh rỗng.")
     
-    # 1. Standardize Audio via FFmpeg to 16kHz WAV
+    # 1. Chuẩn hóa âm thanh và lọc nhiễu qua FFmpeg
     try:
         wav_bytes = await asyncio.to_thread(convert_audio_to_wav, raw_audio_bytes)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Không thể xử lý file âm thanh: {str(e)}")
     
-    # 2. Speech-to-Text (faster-whisper GPU)
+    # 2. Nhận diện giọng nói STT (Groq LPU / Faster-Whisper GPU)
     t_stt_start = time.perf_counter()
     stt_text = await asyncio.to_thread(run_whisper_stt, wav_bytes, language=source_lang)
     t_stt = time.perf_counter() - t_stt_start
@@ -94,18 +108,22 @@ async def voice_translate(
             }
         }
     
-    # 3. Gemini Translation
+    # 3. Dịch văn bản bằng Gemini
     t_trans_start = time.perf_counter()
-    translation = await translate_text(stt_text, source_lang=source_lang, target_lang=target_lang, api_key=resolved_api_key)
+    translation = await translate_text(
+        stt_text,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        api_key=resolved_api_key
+    )
     t_trans = time.perf_counter() - t_trans_start
 
-    # 4. Edge-TTS + encode source audio song song nhau
-    # [OPT-5] source_audio_b64 encoding chạy đồng thời với TTS thay vì tuần tự
+    # 4. Tổng hợp TTS và encode source audio song song
     t_tts_start = time.perf_counter()
-    audio_b64, source_b64 = await asyncio.gather(
-        tts_to_base64(translation, target_lang=target_lang),
-        asyncio.to_thread(lambda: base64.b64encode(raw_audio_bytes).decode('utf-8')),
-    )
+    tts_task = asyncio.create_task(tts_stream_chunks(translation, target_lang=target_lang))
+    source_task = asyncio.to_thread(lambda: base64.b64encode(raw_audio_bytes).decode('utf-8'))
+    tts_result, source_b64 = await asyncio.gather(tts_task, source_task)
+    audio_b64, audio_chunks = tts_result
     t_tts = time.perf_counter() - t_tts_start
 
     t_total = time.perf_counter() - t_start
@@ -113,7 +131,8 @@ async def voice_translate(
     return {
         "stt_text": stt_text,
         "translation": translation,
-        "audio_b64": f"data:audio/mp3;base64,{audio_b64}" if audio_b64 else "",
+        "audio_b64": f"data:audio/wav;base64,{audio_b64}" if audio_b64 else "",
+        "audio_chunks": [f"data:audio/wav;base64,{c}" for c in audio_chunks] if audio_chunks else [],
         "source_audio_b64": f"data:audio/webm;base64,{source_b64}",
         "latency": {
             "stt": round(t_stt, 3),
@@ -122,6 +141,12 @@ async def voice_translate(
             "total": round(t_total, 3)
         }
     }
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
+
 
 @router.get("/", response_class=HTMLResponse)
 async def serve_index():
