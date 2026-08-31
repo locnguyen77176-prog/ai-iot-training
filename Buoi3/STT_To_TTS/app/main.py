@@ -7,17 +7,21 @@ from app.core.cuda_setup import setup_cuda_dlls
 setup_cuda_dlls()
 
 from app.services.stt import init_whisper_model
+from app.services.translation import init_gemini_translation
 from app.services.tts import init_piper_tts
 from app.api.routes import router
+from app.api.websocket_routes import websocket_router
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("=== [1/2] Nạp Faster-Whisper Model trên GPU... ===")
+    print("=== [1/3] Nạp Faster-Whisper Model trên GPU & GPU Warmup... ===")
     init_whisper_model()
-    print("=== [2/2] Nạp Piper Local TTS Engine... ===")
+    print("=== [2/3] Mở kết nối & Warmup Gemini API... ===")
+    init_gemini_translation()
+    print("=== [3/3] Nạp Piper Local TTS Engine & Warmup... ===")
     init_piper_tts()
     print("=== Hệ thống đã sẵn sàng xử lý yêu cầu! ===")
     yield
@@ -38,3 +42,5 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(websocket_router)
+

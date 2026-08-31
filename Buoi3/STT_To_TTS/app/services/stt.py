@@ -25,6 +25,21 @@ def init_whisper_model():
         start_init = time.perf_counter()
         whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device=device_name, compute_type=compute_type)
         print(f"Đã nạp thành công Whisper Model '{WHISPER_MODEL_SIZE}' trên {device_name} trong {time.perf_counter() - start_init:.2f}s!")
+
+        # Warmup CUDA GPU context & cuDNN memory allocator
+        try:
+            import wave, struct
+            dummy_buf = io.BytesIO()
+            with wave.open(dummy_buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(struct.pack("<" + "h" * 8000, *([0] * 8000)))
+            _ = list(whisper_model.transcribe(io.BytesIO(dummy_buf.getvalue()), beam_size=1)[0])
+            print(f"[STT] Whisper GPU Model '{WHISPER_MODEL_SIZE}' đã được Warmup thành công (CUDA Ready)!")
+        except Exception as wu_err:
+            print(f"[STT] Warning GPU Warmup: {wu_err}")
+
     except Exception as e:
         raise RuntimeError(f"Không thể khởi tạo Whisper model '{WHISPER_MODEL_SIZE}': {e}") from e
 

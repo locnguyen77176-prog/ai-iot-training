@@ -42,6 +42,22 @@ def get_gemini_client(api_key: str) -> genai.Client:
         gemini_client_cache[api_key] = genai.Client(api_key=api_key)
     return gemini_client_cache[api_key]
 
+def init_gemini_translation():
+    """Khởi tạo và mở sẵn kết nối HTTPS/TLS với Gemini API."""
+    key = os.environ.get("GEMINI_API_KEY")
+    if key:
+        try:
+            client = get_gemini_client(key)
+            _ = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents="Warmup",
+                config=_CONFIG_VI_TO_EN
+            )
+            print("[NMT] Gemini Translation Client đã được Warmup thành công (TLS Ready)!")
+        except Exception as e:
+            print(f"[NMT] Warning Gemini Warmup: {e}")
+
+
 async def translate_text(
     text: str,
     source_lang: str = "vi",
