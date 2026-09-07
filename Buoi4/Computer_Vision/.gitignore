@@ -1,0 +1,70 @@
+# ==============================================================================
+#                      AI SMARTGATE - .gitignore
+# ==============================================================================
+
+# --- 1. Python Cache & Compiled Files ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# --- 2. Virtual Environments ---
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- 3. Database & Runtime Data ---
+*.db
+*.sqlite
+*.sqlite3
+database.db
+test_e2e_database.db
+test_database.db
+
+# --- 4. Dynamic Captures & Uploads (Ảnh Snapshot & Video Test) ---
+captures/*
+!captures/.gitkeep
+uploads/*
+!uploads/.gitkeep
+test_e2e_captures/
+test_captures/
+scratch/
+test_walking.mp4
+
+# --- 5. Large Model Weights (Có thể tự động tải qua download_models.py) ---
+*.pt
+models/*.onnx
+models/*.caffemodel
+yolov8n.pt
+
+# --- 6. Temporary Files & Logs ---
+*.log
+*.tmp
+*.temp
+=
+
+# --- 7. IDE & Editor Files ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- 8. OS System Files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini

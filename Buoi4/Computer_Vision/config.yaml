@@ -1,0 +1,38 @@
+counting_line:
+  cooldown_seconds: 2.5
+  in_label: IN
+  out_label: OUT
+  point_a:
+  - 10
+  - 356
+  point_b:
+  - 1270
+  - 434
+database:
+  db_path: database.db
+  save_snapshots: true
+  snapshot_dir: captures
+demographics:
+  body_gender_fallback: true
+  enabled: true
+  face_model_path: models/face_detection_yunet_2023mar.onnx
+  face_score_threshold: 0.6
+  gender_model_path: models/gender_googlenet.onnx
+  interval_frames: 4
+detector:
+  confidence_threshold: 0.5
+  device: cuda:0
+  iou_threshold: 0.45
+  model_path: yolov8n.pt
+  tracker: bytetrack.yaml
+source:
+  height: 720
+  path: 0
+  reconnect_interval: 3
+  type: webcam
+  width: 1280
+ui:
+  show_fps: true
+  show_trail: true
+  trail_length: 30
+  window_name: Real-time AI People Counting & Demographics
