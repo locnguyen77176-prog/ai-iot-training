@@ -1,0 +1,21 @@
+FROM python:3.10-slim
+
+# Install system dependencies (including ffmpeg for faster-whisper)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application source code
+COPY . .
+
+ENV PORT=8000
+EXPOSE $PORT
+
+CMD ["python", "run.py"]

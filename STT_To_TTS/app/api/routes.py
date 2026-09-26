@@ -1,0 +1,153 @@
+import os
+import time
+import base64
+import asyncio
+from typing import Optional
+from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException
+from fastapi.responses import HTMLResponse, Response
+
+from app.models.schemas import TextTranslateRequest
+from app.services.audio import convert_audio_to_wav
+from app.services.stt import run_whisper_stt, get_stt_info
+from app.services.translation import translate_text, get_translation_info
+from app.services.tts import tts_stream_chunks
+
+router = APIRouter()
+
+
+@router.get("/api/health")
+async def health_check():
+    stt_info = get_stt_info()
+    trans_info = get_translation_info()
+    return {
+        "status": "online",
+        "stt": stt_info,
+        "translation": trans_info
+    }
+
+
+@router.post("/api/text-translate")
+async def text_translate(req: TextTranslateRequest):
+    t_start = time.perf_counter()
+    
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Văn bản cần dịch không được để trống.")
+    
+    # 1. Dịch văn bản qua Qwen2.5-1.5B Local
+    t_trans_start = time.perf_counter()
+    try:
+        translation = await translate_text(
+            req.text,
+            source_lang=req.source_lang,
+            target_lang=req.target_lang
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi dịch thuật: {str(e)}")
+    t_trans = time.perf_counter() - t_trans_start
+    
+    # 2. Tổng hợp giọng nói TTS
+    t_tts_start = time.perf_counter()
+    audio_b64, audio_chunks = await tts_stream_chunks(translation, target_lang=req.target_lang)
+    t_tts = time.perf_counter() - t_tts_start
+    
+    t_total = time.perf_counter() - t_start
+    
+    return {
+        "translation": translation,
+        "audio_b64": f"data:audio/wav;base64,{audio_b64}" if audio_b64 else "",
+        "audio_chunks": [f"data:audio/wav;base64,{c}" for c in audio_chunks] if audio_chunks else [],
+        "latency": {
+            "translation": round(t_trans, 3),
+            "tts": round(t_tts, 3),
+            "total": round(t_total, 3)
+        }
+    }
+
+
+@router.post("/api/voice-translate")
+async def voice_translate(
+    audio: UploadFile = File(...),
+    source_lang: str = Form("vi"),
+    target_lang: str = Form("en")
+):
+    t_start = time.perf_counter()
+    
+    # Đọc dữ liệu audio
+    raw_audio_bytes = await audio.read()
+    if not raw_audio_bytes:
+        raise HTTPException(status_code=400, detail="File âm thanh rỗng.")
+    
+    # 1. Chuẩn hóa âm thanh và lọc nhiễu qua FFmpeg
+    try:
+        wav_bytes = await asyncio.to_thread(convert_audio_to_wav, raw_audio_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không thể xử lý file âm thanh: {str(e)}")
+    
+    # 2. Nhận diện giọng nói STT (Faster-Whisper GPU)
+    t_stt_start = time.perf_counter()
+    stt_text = await asyncio.to_thread(run_whisper_stt, wav_bytes, language=source_lang)
+    t_stt = time.perf_counter() - t_stt_start
+    
+    if not stt_text.strip():
+        return {
+            "stt_text": "",
+            "translation": "",
+            "audio_b64": "",
+            "source_audio_b64": f"data:audio/webm;base64,{base64.b64encode(raw_audio_bytes).decode('utf-8')}",
+            "warning": "Không nhận diện được giọng nói trong file ghi âm.",
+            "latency": {
+                "stt": round(t_stt, 3),
+                "translation": 0.0,
+                "tts": 0.0,
+                "total": round(time.perf_counter() - t_start, 3)
+            }
+        }
+    
+    # 3. Dịch văn bản bằng Qwen2.5-1.5B Local
+    t_trans_start = time.perf_counter()
+    translation = await translate_text(
+        stt_text,
+        source_lang=source_lang,
+        target_lang=target_lang
+    )
+    t_trans = time.perf_counter() - t_trans_start
+
+    # 4. Tổng hợp TTS và encode source audio song song
+    t_tts_start = time.perf_counter()
+    tts_task = asyncio.create_task(tts_stream_chunks(translation, target_lang=target_lang))
+    source_task = asyncio.to_thread(lambda: base64.b64encode(raw_audio_bytes).decode('utf-8'))
+    tts_result, source_b64 = await asyncio.gather(tts_task, source_task)
+    audio_b64, audio_chunks = tts_result
+    t_tts = time.perf_counter() - t_tts_start
+
+    t_total = time.perf_counter() - t_start
+
+    return {
+        "stt_text": stt_text,
+        "translation": translation,
+        "audio_b64": f"data:audio/wav;base64,{audio_b64}" if audio_b64 else "",
+        "audio_chunks": [f"data:audio/wav;base64,{c}" for c in audio_chunks] if audio_chunks else [],
+        "source_audio_b64": f"data:audio/webm;base64,{source_b64}",
+        "latency": {
+            "stt": round(t_stt, 3),
+            "translation": round(t_trans, 3),
+            "tts": round(t_tts, 3),
+            "total": round(t_total, 3)
+        }
+    }
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
+
+
+@router.get("/", response_class=HTMLResponse)
+async def serve_index():
+    index_path = os.path.join(os.path.dirname(__file__), "..", "..", "index.html")
+    if os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Chưa tìm thấy file index.html</h1>"
