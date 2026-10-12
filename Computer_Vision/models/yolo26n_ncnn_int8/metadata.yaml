@@ -1,0 +1,35 @@
+description: YOLO26n COCO detector quantized to NCNN INT8 for Raspberry Pi 4
+source: ../yolo26n_ncnn_model
+source_param_sha256: 1CF949F1FFB96B63B86F0954743D874FFC409F974E7B3FE966F76B4D7F1A1545
+source_bin_sha256: 5554409BD5DAA8D223E0080F91059109D36BE3AF1140D97FC31FDC319FEEAF6E
+quantizer: ncnn-20260526
+precision: int8
+task: detect
+batch: 1
+imgsz: [640, 640]
+channels: 3
+stride: 32
+input_blob: in0
+output_blob: out0
+output_shape: [1, 84, 8400]
+end2end: false
+nms_in_graph: false
+preprocessing:
+  color: RGB
+  scale: 0.00392156862745098
+  letterbox: true
+  letterbox_color: 114
+calibration:
+  method: kl
+  image_count: 1000
+  source_video_count: 5
+  convolution_layers_int8: 94
+  depthwise_layers_int8: 8
+validation:
+  structural_smoke_test: passed
+  labeled_accuracy_test: pending
+postprocessing:
+  class_filter: [0]
+  confidence_threshold: 0.25
+  iou_threshold: 0.60
+

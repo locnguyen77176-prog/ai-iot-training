@@ -1,0 +1,25 @@
+description: YOLO26n COCO detector exported to NCNN FP32 for Raspberry Pi 4
+source: ../yolo26n.pt
+source_sha256: 9B09CC8BF347F0FC8A5F7657480587F25DB09B34BF33B0652110FB03A8AD4FEF
+exporter: pnnx-20260526
+ultralytics: 8.4.138
+precision: fp32
+task: detect
+batch: 1
+imgsz: [640, 640]
+channels: 3
+stride: 32
+input_blob: in0
+output_blob: out0
+output_shape: [1, 84, 8400]
+end2end: false
+nms_in_graph: false
+preprocessing:
+  color: RGB
+  scale: 0.00392156862745098
+  letterbox: true
+postprocessing:
+  class_filter: [0]
+  confidence_threshold: 0.25
+  iou_threshold: 0.60
+

@@ -1,0 +1,21 @@
+description: OSNet x0.25 MSMT17 ReID encoder exported to NCNN FP32 for Raspberry Pi 4
+source: ../osnet_x0_25_msmt17.pth
+source_sha256: CF55163D78FC44C62C82F85AB62D39F10438679B5ABE8C698AE08CFA84AA6E18
+exporter: pnnx-20260526
+precision: fp32
+task: person_reidentification
+batch: 1
+input_shape: [1, 3, 256, 128]
+embedding_size: 512
+input_blob: in0
+output_blob: out0
+preprocessing:
+  color: RGB
+  value_scale: 0.00392156862745098
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+postprocessing:
+  l2_normalize: true
+  metric: cosine
+  baseline_similarity_threshold: 0.78
+

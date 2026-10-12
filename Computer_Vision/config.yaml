@@ -1,0 +1,70 @@
+database:
+  db_path: database.db
+detector:
+  backend: pytorch
+  confidence_threshold: 0.25
+  device: cuda:0
+  identity_memory_seconds: 40
+  identity_similarity_threshold: 0.82
+  imgsz: 640
+  iou_threshold: 0.6
+  model_path: models/yolo26n.pt
+  reid_ambiguity_margin: 0.0
+  reid_batch_size: 16
+  reid_gallery_size: 5
+  reid_max_per_frame: 4
+  reid_max_periodic_per_frame: 4
+  reid_min_bbox_height: 100
+  reid_min_confidence: 0.55
+  reid_model_path: models/osnet_x0_25_msmt17.pth
+  reid_periodic_schedule_frames: 3
+  reid_recheck_seconds: 10.0
+  reid_sample_interval_frames: 15
+  reid_similarity_threshold: 0.78
+  tracker: custom_fasttrack.yaml
+source:
+  anti_glare:
+    auto: true
+    clahe_clip_limit: 2.0
+    clahe_grid_size: 8
+    enabled: false
+    highlight_compression: 0.6
+    local_contrast_strength: 0.55
+    min_bright_ratio: 0.04
+    threshold: 210
+  flip_horizontal: false
+  height: 720
+  path: auto_usb
+  reconnect_interval: 3
+  target_fps: 15
+  type: camera
+  width: 1280
+ui:
+  show_fps: true
+  show_trail: false
+  trail_length: 30
+  window_name: Real-time AI People Counting System
+zones:
+  cooldown_seconds: 3.0
+  in_label: IN
+  min_zone_hits: 2
+  out_label: OUT
+  state_ttl_seconds: 120.0
+  zone_a:
+  - - 224
+    - 171
+  - - 1064
+    - 171
+  - - 1064
+    - 371
+  - - 224
+    - 371
+  zone_b:
+  - - 220
+    - 429
+  - - 1060
+    - 429
+  - - 1060
+    - 629
+  - - 220
+    - 629

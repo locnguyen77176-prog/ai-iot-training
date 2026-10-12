@@ -1,0 +1,26 @@
+name: visionflow-pi
+
+services:
+  visionflow:
+    image: "${VISIONFLOW_IMAGE:-visionflow-pi:latest}"
+    build:
+      context: .
+      dockerfile: Dockerfile.pi
+      args:
+        NCNN_VERSION: "20260526"
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    devices:
+      - "${VIDEO_DEVICE:-/dev/video0}:/dev/video0"
+    environment:
+      VISIONFLOW_CONFIG: config.pi.yaml
+      RUN_NCNN_SMOKE: "${RUN_NCNN_SMOKE:-1}"
+      OMP_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "1"
+    volumes:
+      - ./config.pi.yaml:/app/config.pi.yaml
+      - ./database.db:/app/database.db
+      - ./uploads:/app/uploads
+    shm_size: "128m"
+    mem_limit: "3g"

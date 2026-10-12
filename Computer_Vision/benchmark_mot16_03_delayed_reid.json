@@ -1,0 +1,124 @@
+{
+  "video": "D:\\ai-iot-training\\Computer_Vision\\uploads\\MOT16-03.mp4",
+  "source": {
+    "frames": 1500,
+    "fps": 15.0,
+    "size": [
+      960,
+      540
+    ],
+    "duration_seconds": 100.0
+  },
+  "processed_frames": 1500,
+  "runtime": {
+    "backend": "FASTTracker",
+    "external_reid": "OSNetReIDEncoder",
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "cuda": "12.4",
+    "python": "3.13.13",
+    "torch": "2.6.0+cu124",
+    "opencv": "5.0.0",
+    "model_load_seconds": 1.154,
+    "processing_seconds": 118.479,
+    "pipeline_fps": 12.66,
+    "realtime_factor": 0.844,
+    "latency_ms_mean": 72.47,
+    "latency_ms_p95": 130.93
+  },
+  "detections": {
+    "total": 60425,
+    "people_per_frame_mean": 40.283,
+    "people_per_frame_max": 54,
+    "confidence_mean": 0.587,
+    "confidence_p05": 0.312
+  },
+  "tracking": {
+    "unique_local_ids": 314,
+    "unique_stable_ids": 313,
+    "local_ids_reconnected": 1,
+    "reidentified_events": 26,
+    "duplicate_boxes_suppressed": 80,
+    "observed_frames_per_id_median": 88,
+    "observed_frames_per_id_p95": 680.2,
+    "track_span_frames_median": 108
+  },
+  "counting": {
+    "in": 33,
+    "out": 15,
+    "events": {
+      "IN": 33,
+      "OUT": 15
+    }
+  },
+  "config": {
+    "detector": {
+      "confidence_threshold": 0.25,
+      "device": "cuda:0",
+      "identity_memory_seconds": 40,
+      "identity_similarity_threshold": 0.82,
+      "imgsz": 960,
+      "iou_threshold": 0.6,
+      "model_path": "yolov8s.pt",
+      "reid_ambiguity_margin": 0.0,
+      "reid_batch_size": 16,
+      "reid_gallery_size": 5,
+      "reid_max_per_frame": 4,
+      "reid_max_periodic_per_frame": 4,
+      "reid_periodic_schedule_frames": 3,
+      "reid_min_bbox_height": 100,
+      "reid_min_confidence": 0.55,
+      "reid_model_path": "models/osnet_x0_25_msmt17.pth",
+      "reid_sample_interval_frames": 15,
+      "reid_similarity_threshold": 0.78,
+      "tracker": "custom_fasttrack.yaml"
+    },
+    "zones": {
+      "cooldown_seconds": 3.0,
+      "in_label": "IN",
+      "min_zone_hits": 2,
+      "out_label": "OUT",
+      "state_ttl_seconds": 120.0,
+      "zone_a": [
+        [
+          10,
+          79
+        ],
+        [
+          1275,
+          134
+        ],
+        [
+          1275,
+          392
+        ],
+        [
+          10,
+          391
+        ]
+      ],
+      "zone_b": [
+        [
+          17,
+          533
+        ],
+        [
+          1275,
+          529
+        ],
+        [
+          1275,
+          715
+        ],
+        [
+          58,
+          715
+        ]
+      ]
+    }
+  },
+  "notes": [
+    "Không có ground-truth đi kèm nên các chỉ số tracking không phải MOTA/IDF1.",
+    "IN/OUT phụ thuộc trực tiếp vào ROI hiện tại trong config.yaml."
+  ]
+}

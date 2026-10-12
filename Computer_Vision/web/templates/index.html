@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI SmartGate - Giám Sát Lưu Lượng & Lịch Sử Người Ra Vào</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=20260911_v12">
+</head>
+
+<body>
+
+    <div class="site-wrapper">
+
+        <!-- ====================================================================
+         PRINT REPORT HEADER (Chỉ hiện khi In hoặc Xuất PDF)
+         ==================================================================== -->
+        <div class="print-header">
+            <div class="print-title">BÁO CÁO GIÁM SÁT LƯU LƯỢNG NGƯỜI RA VÀO</div>
+            <div class="print-subtitle">Hệ Thống Thị Giác Máy Tính AI (YOLO26n + FastTrack + OSNet) - Trạm: Cổng Chính #01</div>
+            <div class="print-meta" id="printReportMeta">Ngày in báo cáo: 2026-09-04 | Đơn vị vận hành: AI-IoT Computer
+                Vision System</div>
+        </div>
+
+        <!-- ====================================================================
+         TOP APP HEADER
+         ==================================================================== -->
+        <header class="app-header no-print">
+            <div class="header-brand">
+                <div class="brand-badge-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">SmartGate <span>AI</span></h1>
+                    <p class="brand-sub">Hệ Thống Đếm Người & Giám Sát Lưu Lượng Thời Gian Thực</p>
+                </div>
+            </div>
+
+            <div class="header-status-pills">
+                <div class="status-pill live">
+                    <span class="pulse-dot"></span>
+                    <span id="sysFps" title="Tốc độ xử lý của pipeline AI">AI 0.0 FPS</span>
+                </div>
+                <div class="status-pill gpu">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2" />
+                        <rect x="9" y="9" width="6" height="6" />
+                        <line x1="9" y1="1" x2="9" y2="4" />
+                        <line x1="15" y1="1" x2="15" y2="4" />
+                        <line x1="9" y1="20" x2="9" y2="23" />
+                        <line x1="15" y1="20" x2="15" y2="23" />
+                        <line x1="20" y1="9" x2="23" y2="9" />
+                        <line x1="20" y1="14" x2="23" y2="14" />
+                        <line x1="1" y1="9" x2="4" y2="9" />
+                        <line x1="1" y1="14" x2="4" y2="14" />
+                    </svg>
+                    <span id="gpuStatusText">NVIDIA RTX 3050 (CUDA)</span>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                <button type="button" class="btn-action secondary btn-excel-export" id="btnExportExcel"
+                    onclick="downloadExcelReport()" title="Tải toàn bộ báo cáo lưu lượng & phân tích 24h ra file Excel">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="8" y1="13" x2="16" y2="13"></line>
+                        <line x1="8" y1="17" x2="16" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span id="btnExportExcelText">Xuất Excel</span>
+                </button>
+                <button class="btn-action danger" id="btnClearHistoryBtn" title="Xóa dữ liệu để đếm lại từ đầu">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    Làm Sạch Dữ Liệu
+                </button>
+            </div>
+        </header>
+
+        <!-- ====================================================================
+         TOP METRICS ROW (4 Thẻ Chỉ Số Cốt Lõi)
+         ==================================================================== -->
+        <section class="metrics-grid">
+            <!-- 1. Lượt Vào (IN) -->
+            <div class="metric-box in-box">
+                <div class="metric-header">
+                    <div class="metric-icon-wrap in-color">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <polyline points="19 12 12 19 5 12"></polyline>
+                        </svg>
+                    </div>
+                    <span class="metric-tag">LƯỢT VÀO (IN)</span>
+                </div>
+                <div class="metric-main">
+                    <div class="metric-number" id="valTotalIn">0</div>
+                    <div class="metric-sub text-green">Đã ghi nhận qua vạch</div>
+                </div>
+            </div>
+
+            <!-- 2. Lượt Ra (OUT) -->
+            <div class="metric-box out-box">
+                <div class="metric-header">
+                    <div class="metric-icon-wrap out-color">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
+                            <line x1="12" y1="19" x2="12" y2="5"></line>
+                            <polyline points="5 12 12 5 19 12"></polyline>
+                        </svg>
+                    </div>
+                    <span class="metric-tag">LƯỢT RA (OUT)</span>
+                </div>
+                <div class="metric-main">
+                    <div class="metric-number" id="valTotalOut">0</div>
+                    <div class="metric-sub text-red">Đã rời khỏi khu vực</div>
+                </div>
+            </div>
+
+            <!-- 3. Hiện Diện Bên Trong -->
+            <div class="metric-box occ-box">
+                <div class="metric-header">
+                    <div class="metric-icon-wrap occ-color">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                    </div>
+                    <span class="metric-tag">HIỆN DIỆN (OCCUPANCY)</span>
+                </div>
+                <div class="metric-main">
+                    <div class="metric-number" id="valOccupancy">0</div>
+                    <div class="metric-sub text-blue">Số người đang có mặt</div>
+                </div>
+            </div>
+
+            <!-- 4. Tổng Lưu Lượng (Total Traffic) -->
+            <div class="metric-box demo-box">
+                <div class="metric-header">
+                    <div class="metric-icon-wrap demo-color">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <polyline points="16 11 18 13 22 9"></polyline>
+                        </svg>
+                    </div>
+                    <span class="metric-tag">TỔNG LƯU LƯỢNG</span>
+                </div>
+                <div class="metric-main">
+                    <div class="metric-number" id="valTotalAnalyzed">0</div>
+                    <div class="metric-sub" id="demoRatioSummary">Tổng lượt vào + ra</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+         SECTION: LIVE CAMERA GIÁM SÁT RỘNG & THIẾT LẬP VẠCH BẰNG CHUỘT
+         ==================================================================== -->
+        <section class="camera-hero-section no-print">
+            <div class="card-panel camera-hero-panel">
+                <div class="panel-header-row">
+                    <div class="panel-title-wrap">
+                        <span class="live-dot-indicator" id="cameraLiveDot"></span>
+                        <h2>Camera Giám Sát Thời Gian Thực </h2>
+                    </div>
+                    <div class="panel-tools camera-controls-row">
+                        <span class="badge-cam-status off" id="cameraStatusBadge">● Đang Dừng</span>
+
+                        <!-- Nút Bật/Tắt Chỉnh Vùng Bằng Chuột -->
+                        <button type="button" class="btn-source-action active-toggle" id="btnToggleLineEditor"
+                            title="Bật/Tắt chế độ kéo thả 2 vùng không gian trực tiếp trên video">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="3" y1="12" x2="21" y2="12"></line>
+                            </svg>
+                            <span id="btnLineEditorText">Chỉnh 2 Vùng ROI</span>
+                        </button>
+
+                        <!-- Nút Tải Video Mới -->
+                        <button type="button" class="btn-source-action" id="btnUploadVideo"
+                            title="Tải file video (.mp4, .avi, .mov) lên để chạy kiểm thử">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <span>Tải Video Lên</span>
+                        </button>
+
+                        <!-- Danh Sách Video -->
+                        <button type="button" class="btn-source-action" id="btnOpenSourceModal"
+                            title="Xem và chọn video trong danh sách">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+                                <line x1="7" y1="2" x2="7" y2="22"></line>
+                                <line x1="17" y1="2" x2="17" y2="22"></line>
+                                <line x1="2" y1="12" x2="22" y2="12"></line>
+                            </svg>
+                            <span id="cameraSourceText">Danh Sách Video</span>
+                        </button>
+
+                        <!-- Nút Bật/Tắt Luồng Video -->
+                        <button type="button" class="btn-cam-switch btn-turn-on" id="btnToggleCamera"
+                            title="Phát hoặc tạm dừng video">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
+                                id="btnToggleCameraIcon">
+                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            <span id="btnToggleCameraText">Phát Video</span>
+                        </button>
+                        <input type="file" id="videoFileInput" accept=".mp4,.avi,.mkv,.mov,.wmv"
+                            style="display:none;" />
+                    </div>
+                </div>
+
+                <!-- Thanh Công Cụ Thiết Lập 2 Vùng Bằng Chuột Trực Tiếp -->
+                <div class="line-quick-toolbar" id="lineQuickToolbar">
+                    <div class="quick-toolbar-tip">
+                        <span class="tip-badge">HỆ THỐNG 2 VÙNG KHÔNG GIAN ROI</span>
+                    </div>
+                    <div class="quick-toolbar-btns">
+                        <button type="button" class="btn-tool-chip" id="btnPresetHorizontal"
+                            title="Đặt Vùng A ở trên, Vùng B ở dưới">
+                            <span>➖ Cửa Ngang (A Trên / B Dưới)</span>
+                        </button>
+                        <button type="button" class="btn-tool-chip" id="btnPresetVertical"
+                            title="Đặt Vùng A ở bên trái, Vùng B ở bên phải">
+                            <span>┃ Cửa Dọc (A Trái / B Phải)</span>
+                        </button>
+                        <button type="button" class="btn-tool-chip" id="btnFlipDirection"
+                            title="Đảo ngược vai trò Vùng A <-> Vùng B">
+                            <span>🔄 Đảo Chiều (Zone A ↔ Zone B)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Khung Màn Hình Camera Mở Rộng & Lớp Phủ SVG Tương Tác 2 VÙNG -->
+                <div class="camera-screen-box camera-hero-box" id="cameraScreenBox">
+                    <img src="/video_feed" id="cameraStreamImg" class="camera-live-stream" alt="Live Camera Stream" />
+
+                    <!-- SVG Layer trực quan: Cho phép Kéo Thả 2 Vùng Không Gian A & B -->
+                    <svg class="line-interactive-overlay" id="lineInteractiveSvg" viewBox="0 0 1280 720"
+                        preserveAspectRatio="none">
+
+                        <!-- Polygon VÙNG A (NGOÀI CỬA) -->
+                        <polygon id="svgZoneAPoly" points="220,140 1060,140 1060,340 220,340"
+                            fill="rgba(16, 185, 129, 0.22)" stroke="#10b981" stroke-width="2.5" />
+
+                        <!-- Polygon VÙNG B (TRONG CỬA) -->
+                        <polygon id="svgZoneBPoly" points="220,400 1060,400 1060,600 220,600"
+                            fill="rgba(245, 158, 11, 0.22)" stroke="#f59e0b" stroke-width="2.5" />
+
+                        <!-- Mũi tên và nhãn chỉ hướng ở giữa -->
+                        <g id="svgZoneDirectionGroup"></g>
+
+                        <!-- Các điểm góc của VÙNG A (Xanh Lá) -->
+                        <g id="zoneAHandlesGroup"></g>
+
+                        <!-- Các điểm góc của VÙNG B (Cam) -->
+                        <g id="zoneBHandlesGroup"></g>
+                    </svg>
+
+                    <div class="camera-overlay-info">
+                        <span class="badge-tag" id="overlayAiStatus">HỆ THỐNG CHỜ</span>
+                        <span class="badge-tag" id="overlaySourceType">NGUỒN: TỆP VIDEO</span>
+                        <span class="badge-tag" id="overlayLineCoords">2 Vùng ROI FSM: A (Ngoài) → B (Trong)</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================================
+         SECTION: BIỂU ĐỒ LƯU LƯỢNG 24H (BIỂU ĐỒ CỘT ĐÔI VÀO / RA)
+         ==================================================================== -->
+        <section class="analytics-single-grid no-print">
+            <div class="card-panel traffic-panel">
+                <div class="panel-header-row">
+                    <div class="panel-title-wrap">
+                        <h2>Biểu Đồ Lưu Lượng Người Ra / Vào Theo Ngày</h2>
+                        <span style="font-size:0.78rem;color:#64748b;margin-left:8px;font-weight:600;"> </span>
+                    </div>
+                    <div class="chart-legend-row">
+                        <span class="legend-badge in"><span class="legend-color-dot dot-in"></span> Cột Xanh: Lượt Vào
+                            (IN)</span>
+                        <span class="legend-badge out"><span class="legend-color-dot dot-out"></span> Cột Đỏ: Lượt Ra
+                            (OUT)</span>
+                    </div>
+                </div>
+                <div class="traffic-chart-container" id="trafficChartWrapper">
+                    <svg class="traffic-dual-svg" id="trafficDualSvg" viewBox="0 0 1000 280" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="barInGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="#10b981" />
+                                <stop offset="100%" stop-color="#059669" />
+                            </linearGradient>
+                            <linearGradient id="barOutGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="#f43f5e" />
+                                <stop offset="100%" stop-color="#e11d48" />
+                            </linearGradient>
+                        </defs>
+                        <!-- Lưới trục Y & nhãn số lượng (mỗi mốc 10 người) -->
+                        <g id="chartYGridGroup"></g>
+
+                        <!-- Cột đôi Người Vào (Xanh) & Người Ra (Đỏ) -->
+                        <g id="chartBarsGroup"></g>
+
+                        <!-- Nhãn trục X (24 mốc giờ, mỗi mốc 1 giờ) -->
+                        <g id="chartXLabelsGroup"></g>
+
+                        <!-- Lớp tương tác Hover Slot -->
+                        <g id="chartHoverSlotsGroup"></g>
+                    </svg>
+                    <!-- Tooltip tương tác hiển thị khi rê chuột -->
+                    <div id="chartTooltip" class="chart-tooltip" style="display:none;"></div>
+                </div>
+            </div>
+        </section>
+
+
+
+    </div>
+
+    <!-- ====================================================================
+     MODAL CÀI ĐẶT TỌA ĐỘ 2 VÙNG ROI
+     ==================================================================== -->
+    <div class="modal-backdrop" id="lineModal">
+        <div class="modal-box" style="max-width: 600px;">
+            <div class="modal-top">
+                <h3>Cấu Hình 2 Vùng Không Gian Đếm Người (ROI Zones)</h3>
+                <button class="modal-close" id="btnCloseLineModal">&times;</button>
+            </div>
+            <p class="modal-desc">
+                Hệ thống sử dụng Máy trạng thái <strong>Dual-Zone FSM</strong>: Người đi từ Vùng A (Ngoài) $\rightarrow$
+                Vùng B (Trong) được đếm là Vào (IN) và tự động khóa chống đếm lặp.
+            </p>
+            <div class="zone-presets-modal-row" style="display:flex;gap:10px;margin-bottom:16px;">
+                <button type="button" class="btn-action outline btn-sm" id="btnModalPresetHoriz">➖ Preset Cửa
+                    Ngang</button>
+                <button type="button" class="btn-action outline btn-sm" id="btnModalPresetVert">┃ Preset Cửa
+                    Dọc</button>
+                <button type="button" class="btn-action outline btn-sm" id="btnModalPresetFlip">🔄 Đảo Chiều A ↔
+                    B</button>
+            </div>
+            <div class="modal-btn-row">
+                <button class="btn-action outline" id="btnCancelLineModal">Đóng</button>
+                <button class="btn-action primary" id="btnSaveLineModal">Lưu Cấu Hình Vùng</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====================================================================
+     MODAL CHỌN NGUỒN VIDEO & QUẢN LÝ VIDEO KIỂM THỬ
+     ==================================================================== -->
+    <div class="modal-backdrop" id="videoSourceModal">
+        <div class="modal-box">
+            <div class="modal-top">
+                <h3>Danh Sách & Quản Lý Video Kiểm Thử</h3>
+                <button class="modal-close" id="btnCloseSourceModal">&times;</button>
+            </div>
+            <p class="modal-desc">
+                Chọn video có sẵn trong thư mục <code>uploads/</code> hoặc tải thêm tệp video mới (.mp4, .avi, .mov,
+                .mkv) để chạy giám sát AI:
+            </p>
+
+            <div class="source-options-grid single-card">
+                <div class="source-card full-width" id="cardUploadNewVideo">
+                    <div class="source-card-icon">📤</div>
+                    <div class="source-card-info">
+                        <h4>Tải Video Mới Lên</h4>
+                        <p>Hỗ trợ tệp video camera an ninh (.mp4, .avi, .mkv, .mov, .wmv)</p>
+                    </div>
+                    <button type="button" class="btn-action primary btn-sm" id="btnTriggerUploadModal">Chọn Tệp
+                        Video</button>
+                </div>
+            </div>
+
+            <h4 style="margin-top:22px;margin-bottom:12px;font-size:0.95rem;font-weight:800;color:var(--text-main);">
+                Danh Sách Video Trong Thư Mục uploads/:</h4>
+            <div class="uploaded-videos-list" id="uploadedVideosList">
+                <div style="color:#94a3b8;font-size:0.85rem;padding:12px 0;">Đang tải danh sách video...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js?v=20261003_v13"></script>
+</body>
+
+</html>

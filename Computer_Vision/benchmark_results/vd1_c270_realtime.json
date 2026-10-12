@@ -1,0 +1,68 @@
+{
+  "video": "D:\\ai-iot-training\\Computer_Vision\\uploads\\vd1.mp4",
+  "simulation": {
+    "profile": "Logitech C270-like realtime",
+    "resolution": [
+      1280,
+      720
+    ],
+    "camera_fps": 15.0,
+    "buffer": "latest-one-frame",
+    "jpeg_quality": 90,
+    "flip_horizontal": true,
+    "anti_glare_enabled": false,
+    "zones": "evaluation horizontal A(top) -> B(bottom)"
+  },
+  "source": {
+    "fps": 25.00333288894814,
+    "frames": 7502,
+    "duration_seconds": 300.04
+  },
+  "runtime": {
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "python": "3.13.13",
+    "model_load_seconds": 2.0531508999993093,
+    "warmup_seconds": 3.969605700000102,
+    "benchmark_wall_seconds": 224.70581820000007,
+    "processing_seconds": 155.37968239998554,
+    "core_capacity_fps": 28.96131547248174,
+    "latency_ms_mean": 34.5288183111079,
+    "latency_ms_p50": 37.00170000047365,
+    "latency_ms_p95": 48.858834999828105,
+    "latency_ms_max": 114.13480000010168
+  },
+  "realtime": {
+    "published_frames": 4500,
+    "processed_frames": 4500,
+    "dropped_frames": 0,
+    "drop_percent": 0.0,
+    "effective_ai_fps": 14.998000266631115,
+    "keeps_realtime": true
+  },
+  "detections": {
+    "people_total": 85716,
+    "people_per_frame_mean": 19.048,
+    "people_per_frame_max": 30,
+    "confidence_mean": 0.7202517966307341
+  },
+  "tracking": {
+    "local_ids": 608,
+    "stable_ids": 590,
+    "reidentified_total": 53,
+    "delayed_corrections": 35,
+    "duplicates_suppressed": 87
+  },
+  "counting": {
+    "IN": 95,
+    "OUT": 106,
+    "note": "No ground-truth passage labels; event totals are not accuracy metrics."
+  },
+  "config": {
+    "model": "yolov8s.pt",
+    "imgsz": 960,
+    "confidence_threshold": 0.25,
+    "reid_max_per_frame": 4,
+    "reid_recheck_seconds": 10.0
+  }
+}

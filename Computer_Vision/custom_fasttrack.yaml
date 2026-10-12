@@ -1,0 +1,19 @@
+# FastTrack cho camera cố định và cảnh đông người.
+# FastTrack chỉ giữ local ID ngắn hạn; OSNet bên ngoài nối stable ID dài hạn.
+tracker_type: fasttrack
+track_high_thresh: 0.30
+track_low_thresh: 0.08
+new_track_thresh: 0.38
+track_buffer: 45
+match_thresh: 0.82
+fuse_score: true
+
+# Khôi phục Kalman khi một track bị người khác che khuất.
+reset_velocity_offset_occ: 5
+reset_pos_offset_occ: 3
+enlarge_bbox_occ: 1.10
+dampen_motion_occ: 0.50
+active_occ_to_lost_thresh: 10
+occ_cover_thresh: 0.70
+occ_reappear_window: 45
+init_iou_suppress: 0.70
