@@ -127,7 +127,12 @@ class AIEngineWorker:
             ncnn_reid_param=det_cfg.get("ncnn_reid_param"),
             ncnn_reid_bin=det_cfg.get("ncnn_reid_bin"),
             ncnn_num_threads=det_cfg.get("ncnn_num_threads", 4),
+            ncnn_reid_num_threads=det_cfg.get("ncnn_reid_num_threads"),
             ncnn_use_vulkan=det_cfg.get("ncnn_use_vulkan", False),
+            ncnn_async_detection=det_cfg.get("ncnn_async_detection", False),
+            ncnn_detection_interval_frames=det_cfg.get(
+                "ncnn_detection_interval_frames", 1
+            ),
         )
 
         zone_cfg = self.cfg.get("zones", {})
@@ -143,6 +148,10 @@ class AIEngineWorker:
             min_zone_hits=zone_cfg.get("min_zone_hits", 2)
         )
         self.visualizer = Visualizer(config_path=self.config_path)
+        self.jpeg_quality = min(
+            95,
+            max(35, int(self.cfg.get("ui", {}).get("jpeg_quality", 68))),
+        )
 
         self.latest_encoded_frame = None
         self.frame_seq = 0
@@ -367,7 +376,11 @@ class AIEngineWorker:
                 packet["ai_fps"], is_cuda=self.is_cuda,
             )
 
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+            ret, buffer = cv2.imencode(
+                '.jpg',
+                frame,
+                [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality],
+            )
             if not ret:
                 continue
 
@@ -405,6 +418,7 @@ class AIEngineWorker:
 
     def stop(self):
         self.stop_camera()
+        self.tracker.close()
         self.db_manager.close()
 
 
@@ -563,6 +577,10 @@ def get_camera_status():
         "fps": fps,
         "ai_fps": ai_worker.ai_fps if active else 0.0,
         "display_fps": ai_worker.display_fps if active else 0.0,
+        "detector_fps": ai_worker.tracker.detector_fps if active else 0.0,
+        "detector_latency_ms": (
+            ai_worker.tracker.detector_latency_ms if active else 0.0
+        ),
         "source": source_val,
         "source_type": source_type,
         "source_name": source_name,
@@ -761,6 +779,14 @@ def get_stats():
             "fps": ai_worker.fps if (ai_worker is not None and ai_worker.is_active()) else 0.0,
             "ai_fps": ai_worker.ai_fps if (ai_worker is not None and ai_worker.is_active()) else 0.0,
             "display_fps": ai_worker.display_fps if (ai_worker is not None and ai_worker.is_active()) else 0.0,
+            "detector_fps": (
+                ai_worker.tracker.detector_fps
+                if (ai_worker is not None and ai_worker.is_active()) else 0.0
+            ),
+            "detector_latency_ms": (
+                ai_worker.tracker.detector_latency_ms
+                if (ai_worker is not None and ai_worker.is_active()) else 0.0
+            ),
             "gpu": gpu_name,
             "backend": ai_worker.tracker.backend_name if ai_worker is not None else "not_initialized",
             "cuda_available": cuda_available,

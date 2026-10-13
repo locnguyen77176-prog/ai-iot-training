@@ -61,7 +61,7 @@ Get-ChildItem -LiteralPath $stagingRoot -Recurse -Filter "*.sh" -File |
 
 $modelsDest = Join-Path $stagingRoot "models"
 New-Item -ItemType Directory -Force -Path $modelsDest | Out-Null
-foreach ($name in @("yolo26n_ncnn_int8", "osnet_x0_25_ncnn_model")) {
+foreach ($name in @("yolo26n_320_ncnn_int8", "osnet_x0_25_ncnn_model")) {
     Copy-Item -LiteralPath (Join-Path (Join-Path $projectRoot "models") $name) -Destination $modelsDest -Recurse
 }
 

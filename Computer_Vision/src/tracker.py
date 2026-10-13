@@ -1,7 +1,10 @@
 import os
 import sys
 import time
+from collections import deque
+from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass, field
+from multiprocessing import get_context
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -18,6 +21,24 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TRACKER_PATH = os.path.join(BASE_DIR, "custom_fasttrack.yaml")
 if not os.path.exists(DEFAULT_TRACKER_PATH):
     DEFAULT_TRACKER_PATH = "fasttrack.yaml"
+
+
+def _resolve_project_path(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
+
+
+def _load_yaml_mapping(path: str) -> Dict[str, Any]:
+    """Load optional tracker settings without making startup depend on the file."""
+    try:
+        import yaml
+
+        with open(path, "r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        return config if isinstance(config, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 @dataclass
@@ -268,7 +289,8 @@ class PersistentIdentityManager:
 
     def update(self, frame: np.ndarray, tracks: List[Dict[str, Any]],
                now: Optional[float] = None,
-               reid_features: Optional[Dict[int, np.ndarray]] = None) -> List[Dict[str, Any]]:
+               reid_features: Optional[Dict[int, np.ndarray]] = None,
+               update_appearance: bool = True) -> List[Dict[str, Any]]:
         now = time.monotonic() if now is None else float(now)
         reid_features = reid_features or {}
         tracks = self._suppress_duplicate_tracks(tracks, reid_features)
@@ -281,7 +303,11 @@ class PersistentIdentityManager:
             local_id = int(item["track_id"])
             bbox = item["bbox"]
             center = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
-            descriptor = self.extract_descriptor(frame, bbox)
+            needs_initial_descriptor = local_id not in self.local_to_stable
+            descriptor = (
+                self.extract_descriptor(frame, bbox)
+                if update_appearance or needs_initial_descriptor else None
+            )
             deep_descriptor = reid_features.get(local_id)
             if deep_descriptor is not None:
                 deep_descriptor = np.asarray(deep_descriptor, dtype=np.float32).reshape(-1)
@@ -419,7 +445,10 @@ class YOLOTracker:
                  ncnn_reid_param: Optional[str] = None,
                  ncnn_reid_bin: Optional[str] = None,
                  ncnn_num_threads: int = 4,
-                 ncnn_use_vulkan: bool = False):
+                 ncnn_reid_num_threads: Optional[int] = None,
+                 ncnn_use_vulkan: bool = False,
+                 ncnn_async_detection: bool = False,
+                 ncnn_detection_interval_frames: int = 1):
         self.backend = str(backend).strip().lower()
         if self.backend not in {"pytorch", "ncnn"}:
             raise ValueError(f"Unsupported detector backend: {backend!r}")
@@ -449,35 +478,87 @@ class YOLOTracker:
         self._frame_index = 0
         self._reid_last_sample: Dict[int, int] = {}
 
+        self.ncnn_async_detection = self.backend == "ncnn" and bool(ncnn_async_detection)
+        self.ncnn_detection_interval_frames = max(1, int(ncnn_detection_interval_frames))
+        self._detector_executor: Optional[ProcessPoolExecutor] = None
+        self._detector_callable = None
+        self._detector_future: Optional[Future] = None
+        self._detector_future_frame: Optional[np.ndarray] = None
+        self._detector_future_sequence = 0
+        self._detector_future_generation = 0
+        self._detector_last_submit_sequence: Optional[int] = None
+        self._detector_last_applied_sequence: Optional[int] = None
+        self._detector_generation = 0
+        self._ncnn_sequence = 0
+        self._detector_timestamps = deque(maxlen=30)
+        self._detector_fps = 0.0
+        self._detector_latency_ms = 0.0
+        self._detector_result_applied = False
+        self._detector_reid_frame: Optional[np.ndarray] = None
+        self._detector_reid_tracks: List[Dict[str, object]] = []
+
         self.reid_encoder = None
         self.local_tracker = None
         if self.backend == "ncnn":
-            from src.ncnn_backend import LiteByteTracker, NcnnOSNetEncoder, NcnnYoloDetector
+            # NCNN already parallelizes inference. Avoid nested OpenCV worker pools
+            # competing with the web/render process for the same Pi CPU cores.
+            cv2.setNumThreads(1)
+            from src.ncnn_backend import (
+                LiteByteTracker,
+                NcnnOSNetEncoder,
+                NcnnYoloDetector,
+                detect_in_process,
+                detector_process_ready,
+                initialize_detector_process,
+            )
 
-            def resolve(path: Optional[str]) -> Optional[str]:
-                if not path:
-                    return None
-                return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
-
-            detector_param = resolve(ncnn_detector_param)
-            detector_bin = resolve(ncnn_detector_bin)
+            detector_param = _resolve_project_path(ncnn_detector_param)
+            detector_bin = _resolve_project_path(ncnn_detector_bin)
+            reid_num_threads = (
+                max(1, int(ncnn_reid_num_threads))
+                if ncnn_reid_num_threads is not None else max(1, int(ncnn_num_threads))
+            )
             if not detector_param or not detector_bin:
                 raise ValueError("NCNN backend requires ncnn_detector_param and ncnn_detector_bin")
             self.device = "cpu"
-            print(f"[Tracker] Loading YOLO26n NCNN on CPU ({ncnn_num_threads} threads, imgsz: {self.imgsz})...")
-            self.model = NcnnYoloDetector(
-                detector_param, detector_bin, imgsz=self.imgsz,
-                confidence_threshold=self.conf, iou_threshold=self.iou,
-                num_threads=ncnn_num_threads, use_vulkan=ncnn_use_vulkan,
-            )
-            tracker_config: Dict[str, Any] = {}
-            try:
-                import yaml
-
-                with open(self.tracker, "r", encoding="utf-8") as handle:
-                    tracker_config = yaml.safe_load(handle) or {}
-            except (OSError, ValueError):
-                pass
+            if self.ncnn_async_detection:
+                detector_config = {
+                    "param_path": detector_param,
+                    "bin_path": detector_bin,
+                    "imgsz": self.imgsz,
+                    "confidence_threshold": self.conf,
+                    "iou_threshold": self.iou,
+                    "num_threads": ncnn_num_threads,
+                    "use_vulkan": ncnn_use_vulkan,
+                }
+                self.model = None
+                self._detector_callable = detect_in_process
+                self._detector_executor = ProcessPoolExecutor(
+                    max_workers=1,
+                    mp_context=get_context("spawn"),
+                    initializer=initialize_detector_process,
+                    initargs=(detector_config,),
+                )
+                detector_ready = self._detector_executor.submit(
+                    detector_process_ready
+                ).result(timeout=60)
+                if not detector_ready:
+                    raise RuntimeError("NCNN detector process failed to initialize")
+                print(
+                    f"[Tracker] YOLO26n NCNN runs in a dedicated process "
+                    f"({ncnn_num_threads} threads, imgsz: {self.imgsz})"
+                )
+            else:
+                print(
+                    f"[Tracker] Loading YOLO26n NCNN on CPU "
+                    f"({ncnn_num_threads} threads, imgsz: {self.imgsz})..."
+                )
+                self.model = NcnnYoloDetector(
+                    detector_param, detector_bin, imgsz=self.imgsz,
+                    confidence_threshold=self.conf, iou_threshold=self.iou,
+                    num_threads=ncnn_num_threads, use_vulkan=ncnn_use_vulkan,
+                )
+            tracker_config = _load_yaml_mapping(self.tracker)
             self.local_tracker = LiteByteTracker(
                 high_threshold=tracker_config.get("track_high_thresh", 0.30),
                 low_threshold=tracker_config.get("track_low_thresh", 0.08),
@@ -488,11 +569,15 @@ class YOLOTracker:
             if ncnn_reid_param and ncnn_reid_bin:
                 self.identity.require_reid_for_match = True
                 self.reid_encoder = NcnnOSNetEncoder(
-                    resolve(ncnn_reid_param), resolve(ncnn_reid_bin),
-                    num_threads=ncnn_num_threads, use_vulkan=ncnn_use_vulkan,
+                    _resolve_project_path(ncnn_reid_param),
+                    _resolve_project_path(ncnn_reid_bin),
+                    num_threads=reid_num_threads, use_vulkan=ncnn_use_vulkan,
                     batch_size=reid_batch_size,
                 )
-                print("[ReID] OSNet x0.25 NCNN FP32 enabled")
+                print(
+                    f"[ReID] OSNet x0.25 NCNN FP32 enabled "
+                    f"({reid_num_threads} thread(s))"
+                )
             return
 
         import torch
@@ -546,6 +631,168 @@ class YOLOTracker:
                 if pool and hasattr(backend, "multi_predict"):
                     backend.multi_predict(pool)
 
+    @staticmethod
+    def _build_tracked_objects(
+        ids: List[int],
+        boxes: List[List[int]],
+        confidences: List[float],
+        frame_shape: Tuple[int, ...],
+    ) -> List[Dict[str, Any]]:
+        """Normalize backend output and derive the head region used by identity matching."""
+        frame_height, frame_width = frame_shape[:2]
+        tracked_objects: List[Dict[str, Any]] = []
+        for local_id, bbox, confidence in zip(ids, boxes, confidences):
+            x1, y1, x2, y2 = [int(value) for value in bbox]
+            x1 = min(frame_width - 1, max(0, x1))
+            x2 = min(frame_width - 1, max(0, x2))
+            y1 = min(frame_height - 1, max(0, y1))
+            y2 = min(frame_height - 1, max(0, y2))
+            clipped_bbox = [x1, y1, x2, y2]
+            width = max(1, x2 - x1)
+            height = max(1, y2 - y1)
+            head_height = max(18, int(height * 0.25))
+            head_width = max(18, int(width * 0.60))
+            head_center_x = int((x1 + x2) / 2)
+            head_bbox = [
+                max(0, int(head_center_x - head_width / 2)),
+                max(0, y1),
+                min(frame_width - 1, int(head_center_x + head_width / 2)),
+                min(frame_height - 1, y1 + head_height),
+            ]
+            tracked_objects.append({
+                "track_id": local_id,
+                "bbox": clipped_bbox,
+                "head_bbox": head_bbox,
+                "head_point": (head_center_x, int(head_bbox[1] + head_height * 0.5)),
+                "conf": round(float(confidence), 3),
+            })
+        return tracked_objects
+
+    def _select_reid_requests(
+        self, tracked_objects: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Select a bounded, quality-filtered set of tracks for OSNet inference."""
+        urgent_requests = []
+        periodic_requests = []
+        for item in tracked_objects:
+            local_id = int(item["track_id"])
+            bbox_height = int(item["bbox"][3]) - int(item["bbox"][1])
+            last_sample = self._reid_last_sample.get(local_id, -self.reid_sample_interval)
+            is_new_local_id = local_id not in self.identity.local_to_stable
+            stable_id = self.identity.local_to_stable.get(local_id)
+            profile = self.identity.profiles.get(stable_id) if stable_id is not None else None
+            needs_initial_reid = is_new_local_id or (
+                profile is not None and profile.reid_descriptor is None
+            )
+            is_due = self._frame_index - last_sample >= self.reid_sample_interval
+            needs_identity_recheck = (
+                profile is not None
+                and self.identity.should_recheck(stable_id)
+                and is_due
+            )
+            has_quality = (
+                float(item.get("conf", 0.0)) >= self.reid_min_confidence
+                and bbox_height >= self.reid_min_bbox_height
+            )
+            if not has_quality:
+                continue
+
+            priority = (float(item.get("conf", 0.0)), bbox_height)
+            if needs_initial_reid or needs_identity_recheck:
+                urgent_requests.append((priority, item))
+            elif is_due and self._frame_index % self.reid_periodic_schedule_frames == 0:
+                periodic_requests.append((priority, item))
+
+        urgent_requests.sort(key=lambda pair: pair[0], reverse=True)
+        periodic_requests.sort(key=lambda pair: pair[0], reverse=True)
+        requests = [item for _, item in urgent_requests[:self.reid_max_per_frame]]
+        periodic_budget = min(
+            self.reid_max_per_frame - len(requests),
+            self.reid_max_periodic_per_frame,
+        )
+        requests.extend(item for _, item in periodic_requests[:periodic_budget])
+        return requests
+
+    def _submit_ncnn_detection(self, frame: np.ndarray) -> None:
+        if self._detector_executor is None:
+            return
+        self._detector_future_sequence = self._ncnn_sequence
+        self._detector_future_generation = self._detector_generation
+        self._detector_last_submit_sequence = self._ncnn_sequence
+        detector_frame = np.ascontiguousarray(frame.copy())
+        self._detector_future_frame = detector_frame
+        self._detector_future = self._detector_executor.submit(
+            self._detector_callable,
+            detector_frame,
+        )
+
+    def _record_detector_completion(self, inference_ms: float) -> None:
+        completed_at = time.perf_counter()
+        latency_ms = max(0.0, float(inference_ms))
+        if self._detector_latency_ms <= 0:
+            self._detector_latency_ms = latency_ms
+        else:
+            self._detector_latency_ms = 0.8 * self._detector_latency_ms + 0.2 * latency_ms
+        self._detector_timestamps.append(completed_at)
+        if len(self._detector_timestamps) >= 2:
+            elapsed = self._detector_timestamps[-1] - self._detector_timestamps[0]
+            if elapsed > 0:
+                self._detector_fps = (
+                    (len(self._detector_timestamps) - 1) / elapsed
+                )
+
+    def _track_ncnn_async(
+        self, frame: np.ndarray, effective_gap: int
+    ) -> List[Dict[str, object]]:
+        """Keep the realtime pipeline moving while NCNN detects in another process."""
+        self._ncnn_sequence += max(1, int(effective_gap))
+        self._detector_result_applied = False
+
+        if self._detector_future is not None and self._detector_future.done():
+            future = self._detector_future
+            result_sequence = self._detector_future_sequence
+            result_generation = self._detector_future_generation
+            self._detector_future = None
+            detector_frame = self._detector_future_frame
+            self._detector_future_frame = None
+            detections, inference_ms = future.result()
+            self._record_detector_completion(inference_ms)
+
+            if result_generation == self._detector_generation:
+                detection_gap = 1
+                if self._detector_last_applied_sequence is not None:
+                    detection_gap = max(
+                        1,
+                        result_sequence - self._detector_last_applied_sequence,
+                    )
+                corrected_tracks = self.local_tracker.update(
+                    detections,
+                    frame_gap=detection_gap,
+                )
+                self._detector_last_applied_sequence = result_sequence
+                self._detector_result_applied = True
+                self._detector_reid_frame = detector_frame
+                self._detector_reid_tracks = corrected_tracks
+
+        frames_since_submit = (
+            self.ncnn_detection_interval_frames
+            if self._detector_last_submit_sequence is None
+            else self._ncnn_sequence - self._detector_last_submit_sequence
+        )
+        if (
+            self._detector_future is None
+            and frames_since_submit >= self.ncnn_detection_interval_frames
+        ):
+            self._submit_ncnn_detection(frame)
+
+        if self._detector_last_applied_sequence is None:
+            return []
+        prediction_gap = max(
+            0,
+            self._ncnn_sequence - self._detector_last_applied_sequence,
+        )
+        return self.local_tracker.predicted_tracks(prediction_gap)
+
     def track(self, frame: np.ndarray, frame_gap: int = 1,
               delta_time: Optional[float] = None,
               nominal_fps: Optional[float] = None) -> List[Dict[str, Any]]:
@@ -557,10 +804,13 @@ class YOLOTracker:
         if delta_time is not None and nominal_fps is not None and nominal_fps > 0:
             elapsed_steps = max(1, int(round(float(delta_time) * float(nominal_fps))))
             effective_gap = max(effective_gap, elapsed_steps)
-        tracked_objects: List[Dict[str, Any]] = []
         if self.backend == "ncnn":
-            detections = self.model.detect(frame)
-            raw_tracks = self.local_tracker.update(detections, frame_gap=effective_gap)
+            if self.ncnn_async_detection:
+                raw_tracks = self._track_ncnn_async(frame, effective_gap)
+            else:
+                detections = self.model.detect(frame)
+                raw_tracks = self.local_tracker.update(detections, frame_gap=effective_gap)
+                self._detector_result_applied = True
             ids = [int(item["track_id"]) for item in raw_tracks]
             xyxys = [item["bbox"] for item in raw_tracks]
             confs = [float(item["conf"]) for item in raw_tracks]
@@ -576,71 +826,51 @@ class YOLOTracker:
                     conf=self.conf, iou=self.iou, device=self.device, verbose=False, imgsz=self.imgsz,
                 )
             if not results or results[0].boxes is None or results[0].boxes.id is None:
-                return self.identity.update(frame, tracked_objects)
+                return self.identity.update(frame, [])
             boxes = results[0].boxes
             ids = boxes.id.int().cpu().tolist()
             xyxys = boxes.xyxy.int().cpu().tolist()
             confs = boxes.conf.cpu().tolist()
-        frame_h, frame_w = frame.shape[:2]
-
-        for local_id, bbox, conf in zip(ids, xyxys, confs):
-            x1, y1, x2, y2 = bbox
-            w, h = max(1, x2 - x1), max(1, y2 - y1)
-            head_h, head_w = max(18, int(h * 0.25)), max(18, int(w * 0.60))
-            head_cx = int((x1 + x2) / 2)
-            head_bbox = [max(0, int(head_cx - head_w / 2)), max(0, y1),
-                         min(frame_w - 1, int(head_cx + head_w / 2)), min(frame_h - 1, y1 + head_h)]
-            tracked_objects.append({
-                "track_id": local_id, "bbox": bbox, "head_bbox": head_bbox,
-                "head_point": (head_cx, int(head_bbox[1] + head_h * 0.5)),
-                "conf": round(float(conf), 3),
-            })
+        tracked_objects = self._build_tracked_objects(ids, xyxys, confs, frame.shape)
 
         # OSNet work is bounded per frame to prevent latency spikes in crowds.
         reid_features: Dict[int, np.ndarray] = {}
         if self.reid_encoder is not None:
-            urgent_requests = []
-            periodic_requests = []
-            for item in tracked_objects:
-                local_id = int(item["track_id"])
-                bbox_height = int(item["bbox"][3]) - int(item["bbox"][1])
-                last_sample = self._reid_last_sample.get(local_id, -self.reid_sample_interval)
-                is_new_local_id = local_id not in self.identity.local_to_stable
-                stable_id = self.identity.local_to_stable.get(local_id)
-                profile = self.identity.profiles.get(stable_id) if stable_id is not None else None
-                needs_initial_reid = is_new_local_id or (
-                    profile is not None and profile.reid_descriptor is None
+            reid_frame = frame
+            reid_tracks = tracked_objects
+            if (
+                self.backend == "ncnn"
+                and self.ncnn_async_detection
+                and self._detector_result_applied
+                and self._detector_reid_frame is not None
+            ):
+                reid_frame = self._detector_reid_frame
+                ids = [int(item["track_id"]) for item in self._detector_reid_tracks]
+                boxes = [item["bbox"] for item in self._detector_reid_tracks]
+                confidences = [float(item["conf"]) for item in self._detector_reid_tracks]
+                reid_tracks = self._build_tracked_objects(
+                    ids,
+                    boxes,
+                    confidences,
+                    reid_frame.shape,
                 )
-                is_due = self._frame_index - last_sample >= self.reid_sample_interval
-                needs_identity_recheck = (
-                    profile is not None
-                    and self.identity.should_recheck(stable_id)
-                    and is_due
-                )
-                has_quality = (
-                    float(item.get("conf", 0.0)) >= self.reid_min_confidence
-                    and bbox_height >= self.reid_min_bbox_height
-                )
-                if not has_quality:
-                    continue
-                priority = (float(item.get("conf", 0.0)), bbox_height)
-                if needs_initial_reid:
-                    urgent_requests.append((priority, item))
-                elif needs_identity_recheck:
-                    urgent_requests.append((priority, item))
-                elif is_due and self._frame_index % self.reid_periodic_schedule_frames == 0:
-                    periodic_requests.append((priority, item))
-
-            urgent_requests.sort(key=lambda pair: pair[0], reverse=True)
-            periodic_requests.sort(key=lambda pair: pair[0], reverse=True)
-            requests = [item for _, item in urgent_requests[:self.reid_max_per_frame]]
-            remaining = self.reid_max_per_frame - len(requests)
-            periodic_budget = min(remaining, self.reid_max_periodic_per_frame)
-            requests.extend(item for _, item in periodic_requests[:periodic_budget])
-            reid_features = self.reid_encoder.extract(frame, requests)
+            requests = self._select_reid_requests(reid_tracks)
+            reid_features = self.reid_encoder.extract(reid_frame, requests)
             for local_id in reid_features:
                 self._reid_last_sample[local_id] = self._frame_index
-        return self.identity.update(frame, tracked_objects, reid_features=reid_features)
+        self._detector_reid_frame = None
+        self._detector_reid_tracks = []
+        update_appearance = not (
+            self.backend == "ncnn"
+            and self.ncnn_async_detection
+            and not self._detector_result_applied
+        )
+        return self.identity.update(
+            frame,
+            tracked_objects,
+            reid_features=reid_features,
+            update_appearance=update_appearance,
+        )
 
     @property
     def backend_name(self) -> str:
@@ -651,12 +881,30 @@ class YOLOTracker:
         trackers = getattr(predictor, "trackers", []) or []
         return trackers[0].__class__.__name__ if trackers else "not_initialized"
 
+    @property
+    def detector_fps(self) -> float:
+        return round(self._detector_fps, 1)
+
+    @property
+    def detector_latency_ms(self) -> float:
+        return round(self._detector_latency_ms, 1)
+
     def reset(self) -> None:
         """Xóa trạng thái khi đổi nguồn để ID nguồn cũ không rò sang nguồn mới."""
         self.identity.reset()
         self._frame_index = 0
         self._reid_last_sample.clear()
         if self.backend == "ncnn":
+            self._detector_generation += 1
+            self._detector_last_applied_sequence = None
+            self._detector_last_submit_sequence = None
+            self._ncnn_sequence = 0
+            self._detector_timestamps.clear()
+            self._detector_fps = 0.0
+            self._detector_latency_ms = 0.0
+            self._detector_result_applied = False
+            self._detector_reid_frame = None
+            self._detector_reid_tracks = []
             if self.local_tracker is not None:
                 self.local_tracker.reset()
             return
@@ -664,3 +912,13 @@ class YOLOTracker:
         for tracker in getattr(predictor, "trackers", []) or []:
             if hasattr(tracker, "reset"):
                 tracker.reset()
+
+    def close(self) -> None:
+        """Release the optional detector worker during application shutdown."""
+        if self._detector_future is not None:
+            self._detector_future.cancel()
+            self._detector_future = None
+        self._detector_future_frame = None
+        if self._detector_executor is not None:
+            self._detector_executor.shutdown(wait=False, cancel_futures=True)
+            self._detector_executor = None

@@ -16,7 +16,9 @@ services:
     environment:
       VISIONFLOW_CONFIG: config.pi.yaml
       RUN_NCNN_SMOKE: "${RUN_NCNN_SMOKE:-1}"
-      OMP_NUM_THREADS: "4"
+      OMP_NUM_THREADS: "3"
+      OMP_WAIT_POLICY: "PASSIVE"
+      GOMP_SPINCOUNT: "0"
       OPENBLAS_NUM_THREADS: "1"
     volumes:
       - ./config.pi.yaml:/app/config.pi.yaml

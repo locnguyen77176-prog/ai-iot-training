@@ -16,7 +16,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     VISIONFLOW_CONFIG=config.pi.yaml \
     RUN_NCNN_SMOKE=1 \
-    OMP_NUM_THREADS=4 \
+    OMP_NUM_THREADS=3 \
+    OMP_WAIT_POLICY=PASSIVE \
+    GOMP_SPINCOUNT=0 \
     OPENBLAS_NUM_THREADS=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,8 +34,8 @@ RUN python -m pip install --no-cache-dir --no-deps /tmp/ncnn-*.whl && rm /tmp/nc
 COPY . .
 RUN chmod +x /app/docker/entrypoint.sh \
     && python -c "import cv2, ncnn, numpy, yaml; print('Runtime imports OK')" \
-    && test -s models/yolo26n_ncnn_int8/model.ncnn.param \
-    && test -s models/yolo26n_ncnn_int8/model.ncnn.bin \
+    && test -s models/yolo26n_320_ncnn_int8/model.ncnn.param \
+    && test -s models/yolo26n_320_ncnn_int8/model.ncnn.bin \
     && test -s models/osnet_x0_25_ncnn_model/model.ncnn.param \
     && test -s models/osnet_x0_25_ncnn_model/model.ncnn.bin
 

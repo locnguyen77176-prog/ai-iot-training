@@ -29,6 +29,7 @@ VIRTUAL_OR_INTERNAL_MARKERS = (
 
 
 @dataclass(frozen=True)
+
 class FramePacket:
     """A unique captured frame plus timing metadata for real-time tracking."""
 

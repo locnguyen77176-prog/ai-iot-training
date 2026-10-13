@@ -105,7 +105,12 @@ def main():
         ncnn_reid_param=det_cfg.get("ncnn_reid_param"),
         ncnn_reid_bin=det_cfg.get("ncnn_reid_bin"),
         ncnn_num_threads=det_cfg.get("ncnn_num_threads", 4),
+        ncnn_reid_num_threads=det_cfg.get("ncnn_reid_num_threads"),
         ncnn_use_vulkan=det_cfg.get("ncnn_use_vulkan", False),
+        ncnn_async_detection=det_cfg.get("ncnn_async_detection", False),
+        ncnn_detection_interval_frames=det_cfg.get(
+            "ncnn_detection_interval_frames", 1
+        ),
     )
 
     # 5. Khởi tạo Dual-Zone Counter (Máy trạng thái FSM 2 Vùng Không Gian)
@@ -221,6 +226,7 @@ def main():
     finally:
         print("[Main] Đang dọn dẹp tài nguyên và tắt hệ thống...")
         video_stream.stop()
+        tracker.close()
         db_manager.close()
         cv2.destroyAllWindows()
         print("[Main] Kết thúc hoàn tất!")

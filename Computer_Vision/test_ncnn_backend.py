@@ -1,8 +1,29 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
-from src.ncnn_backend import LiteByteTracker, NcnnYoloDetector, _nms_xyxy
+from src.ncnn_backend import (
+    LiteByteTracker,
+    NcnnYoloDetector,
+    _nms_xyxy,
+    _validate_detector_input_size,
+)
+
+
+class NcnnMetadataTests(unittest.TestCase):
+    def test_accepts_runtime_size_matching_export_metadata(self):
+        with patch("src.ncnn_backend._read_model_metadata", return_value={"imgsz": [640, 640]}):
+            self.assertEqual(_validate_detector_input_size("model.ncnn.param", 640), 640)
+
+    def test_rejects_runtime_size_different_from_fixed_export(self):
+        with patch("src.ncnn_backend._read_model_metadata", return_value={"imgsz": [640, 640]}):
+            with self.assertRaisesRegex(ValueError, "does not match.*640x640"):
+                _validate_detector_input_size("model.ncnn.param", 416)
+
+    def test_allows_model_without_metadata(self):
+        with patch("src.ncnn_backend._read_model_metadata", return_value={}):
+            self.assertEqual(_validate_detector_input_size("model.ncnn.param", 320), 320)
 
 
 class NcnnPostprocessTests(unittest.TestCase):
@@ -31,6 +52,17 @@ class LiteByteTrackerTests(unittest.TestCase):
         first = tracker.update([{"bbox": [10, 10, 60, 110], "conf": 0.9}])
         continued = tracker.update([{"bbox": [12, 10, 62, 110], "conf": 0.2}])
         self.assertEqual(first[0]["track_id"], continued[0]["track_id"])
+
+    def test_predicts_intermediate_frame_without_mutating_tracker_state(self):
+        tracker = LiteByteTracker(new_track_threshold=0.3)
+        tracker.update([{"bbox": [10, 10, 60, 110], "conf": 0.9}])
+        tracker.update([{"bbox": [20, 10, 70, 110], "conf": 0.9}])
+
+        predicted = tracker.predicted_tracks(frame_gap=2)
+        current = tracker.predicted_tracks(frame_gap=0)
+
+        self.assertEqual(predicted[0]["bbox"], [27, 10, 77, 110])
+        self.assertEqual(current[0]["bbox"], [20, 10, 70, 110])
 
 
 if __name__ == "__main__":

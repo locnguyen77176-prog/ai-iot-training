@@ -384,8 +384,9 @@ Computer_Vision/
 │   ├── osnet_x0_25_msmt17.pth
 │   ├── yolo26n.pt
 │   ├── osnet_x0_25_ncnn_model/   # OSNet NCNN FP32, input 256x128
-│   ├── yolo26n_ncnn_model/       # YOLO26n NCNN FP32, input 640x640
-│   ├── yolo26n_ncnn_int8/        # YOLO26n NCNN INT8, calibration KL
+│   ├── yolo26n_ncnn_model/       # YOLO26n NCNN FP32 baseline, input 640x640
+│   ├── yolo26n_ncnn_int8/        # YOLO26n NCNN INT8 baseline, input 640x640
+│   ├── yolo26n_320_ncnn_int8/    # YOLO26n NCNN INT8 cho Pi, input 320x320
 │   └── NCNN_EXPORT.md             # Manifest và SHA-256 các artifact NCNN
 ├── uploads/                   # Video kiểm thử do người dùng tải lên
 ├── benchmark_results/         # Báo cáo benchmark/đánh giá

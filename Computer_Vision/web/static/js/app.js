@@ -188,8 +188,10 @@ async function fetchStats() {
             if (fpsEl) {
                 const aiFps = data.system.ai_fps ?? data.system.fps ?? 0;
                 const displayFps = data.system.display_fps ?? 0;
-                fpsEl.textContent = `AI ${aiFps} FPS`;
-                fpsEl.title = `Tốc độ xử lý AI: ${aiFps} FPS | Tốc độ video hiển thị: ${displayFps} FPS`;
+                const detectorFps = data.system.detector_fps ?? aiFps;
+                fpsEl.textContent = `PIPE ${aiFps} | DET ${detectorFps} FPS`;
+                const detectorLatency = data.system.detector_latency_ms ?? 0;
+                fpsEl.title = `Pipeline: ${aiFps} FPS | Detector: ${detectorFps} FPS (${detectorLatency} ms) | Video: ${displayFps} FPS`;
             }
             if (gpuEl) gpuEl.textContent = data.system.gpu;
         }

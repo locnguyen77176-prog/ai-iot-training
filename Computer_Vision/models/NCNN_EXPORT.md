@@ -63,3 +63,27 @@ A3FAA5768E29DF808570098B6B55E84341A09CEFB800CB7F02F28114EF6BB98E  yolo26n.table
 
 The INT8 artifact must not replace the FP32 production baseline until detector
 recall and end-to-end counting accuracy are compared on a labeled validation set.
+
+## YOLO26n 320x320 INT8 cho Raspberry Pi 4
+
+- Source: `yolo26n.pt`, export NCNN cố định ở input `[1, 3, 320, 320]`
+- Output: `[1, 84, 2100]`
+- Output path: `yolo26n_320_ncnn_int8/`
+- Calibration: ACIQ, 1.000 ảnh lấy từ năm video của dự án
+- Preprocessing: BGR sang RGB, scale `1/255`, letterbox 320x320 với padding 114
+- Quantized layers: 94 convolution và 8 depthwise convolution
+- INT8 weights: 2.496.352 bytes
+- Kiểm tra 100 ảnh so với bản 320 FP32 tại IoU 0.50: recall 0,947; precision 0,842
+- Benchmark máy phát triển: 13,8 ms/ảnh, so với 16,2 ms/ảnh của 320 FP32
+- Labeled accuracy validation: pending
+
+Phương pháp KL đã được thử nhưng làm confidence của bản 320 tụt mạnh. Vì vậy model
+triển khai sử dụng bảng ACIQ; không được thay bằng bảng KL chưa đạt kiểm tra.
+
+SHA-256:
+
+```text
+80E49DE01A7D71BD2C1E4C65A2C5544A40DFEA9DCFE94698BD09FB0CB29F87F2  model.ncnn.param
+A6A7495293BAB72EF2F30775A4686A2FA7A99143337CE9E120EFD3ACC7A2551A  model.ncnn.bin
+33A863FA9411D779DD91762FE8480A8182FA65081D880015536F0DA1C1B2C997  yolo26n_320_aciq.table
+```

@@ -7,11 +7,83 @@ binding.  PyTorch and Ultralytics are not imported on the NCNN path.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+
+
+YOLO_OUTPUT_CHANNELS = 84
+PERSON_CLASS_SCORE_ROW = 4
+OSNET_EMBEDDING_SIZE = 512
+NUMERIC_EPSILON = 1e-7
+_PROCESS_DETECTOR = None
+
+
+def _read_model_metadata(param_path: str) -> dict:
+    """Read optional export metadata stored beside an NCNN model."""
+    metadata_path = os.path.join(os.path.dirname(os.path.abspath(param_path)), "metadata.yaml")
+    if not os.path.isfile(metadata_path):
+        return {}
+
+    import yaml
+
+    with open(metadata_path, "r", encoding="utf-8") as handle:
+        metadata = yaml.safe_load(handle) or {}
+    if not isinstance(metadata, dict):
+        raise ValueError(f"NCNN metadata must be a mapping: {metadata_path}")
+    return metadata
+
+
+def _validate_detector_input_size(param_path: str, imgsz: int) -> int:
+    """Fail early when runtime input differs from a fixed-shape NCNN export."""
+    runtime_size = int(imgsz)
+    if runtime_size <= 0:
+        raise ValueError(f"Detector imgsz must be positive, got {imgsz!r}")
+
+    exported_size = _read_model_metadata(param_path).get("imgsz")
+    if exported_size is None:
+        return runtime_size
+    if isinstance(exported_size, (int, float)):
+        exported_dimensions = [int(exported_size), int(exported_size)]
+    elif isinstance(exported_size, (list, tuple)) and len(exported_size) == 2:
+        exported_dimensions = [int(value) for value in exported_size]
+    else:
+        raise ValueError(
+            f"Invalid imgsz in NCNN metadata beside {param_path}: {exported_size!r}"
+        )
+
+    if exported_dimensions != [runtime_size, runtime_size]:
+        exported = "x".join(str(value) for value in exported_dimensions)
+        raise ValueError(
+            f"Configured detector imgsz={runtime_size} does not match the fixed NCNN "
+            f"model input {exported}. Re-export/quantize the model for {runtime_size}x"
+            f"{runtime_size}, or restore imgsz={exported_dimensions[0]}."
+        )
+    return runtime_size
+
+
+def initialize_detector_process(detector_config: dict) -> None:
+    """Load one NCNN detector inside a dedicated worker process."""
+    global _PROCESS_DETECTOR
+    cv2.setNumThreads(1)
+    _PROCESS_DETECTOR = NcnnYoloDetector(**detector_config)
+
+
+def detector_process_ready() -> bool:
+    """Confirm that the worker initializer loaded the detector successfully."""
+    return _PROCESS_DETECTOR is not None
+
+
+def detect_in_process(frame: np.ndarray) -> Tuple[List[Dict[str, object]], float]:
+    """Run detection in the process-local model and return its pure inference time."""
+    if _PROCESS_DETECTOR is None:
+        raise RuntimeError("NCNN detector process was not initialized")
+    started_at = time.perf_counter()
+    detections = _PROCESS_DETECTOR.detect(frame)
+    return detections, (time.perf_counter() - started_at) * 1000.0
 
 
 def _load_ncnn():
@@ -104,7 +176,7 @@ def _nms_xyxy(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> Li
         yy2 = np.minimum(y2[current], y2[rest])
         intersection = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
         union = areas[current] + areas[rest] - intersection
-        iou = intersection / np.maximum(union, 1e-7)
+        iou = intersection / np.maximum(union, NUMERIC_EPSILON)
         order = rest[iou <= float(iou_threshold)]
     return keep
 
@@ -116,7 +188,7 @@ class NcnnYoloDetector:
                  confidence_threshold: float = 0.25, iou_threshold: float = 0.60,
                  input_blob: str = "in0", output_blob: str = "out0",
                  num_threads: int = 4, use_vulkan: bool = False):
-        self.imgsz = int(imgsz)
+        self.imgsz = _validate_detector_input_size(param_path, imgsz)
         self.conf = float(confidence_threshold)
         self.iou = float(iou_threshold)
         self.input_blob = input_blob
@@ -140,16 +212,19 @@ class NcnnYoloDetector:
     def _as_predictions(output: np.ndarray) -> np.ndarray:
         array = np.asarray(output, dtype=np.float32).squeeze()
         if array.ndim == 1:
-            if array.size % 84 != 0:
+            if array.size % YOLO_OUTPUT_CHANNELS != 0:
                 raise RuntimeError(f"Unexpected YOLO output size: {array.size}")
-            array = array.reshape(84, -1)
+            array = array.reshape(YOLO_OUTPUT_CHANNELS, -1)
         elif array.ndim != 2:
             raise RuntimeError(f"Unexpected YOLO output shape: {array.shape}")
-        if array.shape[0] == 84:
+        if array.shape[0] == YOLO_OUTPUT_CHANNELS:
             return array
-        if array.shape[1] == 84:
+        if array.shape[1] == YOLO_OUTPUT_CHANNELS:
             return array.T
-        raise RuntimeError(f"Expected one YOLO output dimension to be 84, got {array.shape}")
+        raise RuntimeError(
+            f"Expected one YOLO output dimension to be {YOLO_OUTPUT_CHANNELS}, "
+            f"got {array.shape}"
+        )
 
     def detect(self, frame: np.ndarray) -> List[Dict[str, object]]:
         if frame is None or frame.size == 0:
@@ -169,7 +244,7 @@ class NcnnYoloDetector:
         predictions = self._as_predictions(_extract(extractor, self.output_blob))
 
         # Exported YOLO26 output is [cx, cy, w, h, 80 class probabilities].
-        scores = predictions[4]
+        scores = predictions[PERSON_CLASS_SCORE_ROW]
         selected = scores >= self.conf
         if not np.any(selected):
             return []
@@ -248,8 +323,10 @@ class NcnnOSNetEncoder:
             if input_ret not in (None, 0):
                 raise RuntimeError(f"NCNN input('{self.input_blob}') failed with code {input_ret}")
             feature = _extract(extractor, self.output_blob).reshape(-1)
-            if feature.size != 512:
-                raise RuntimeError(f"Expected OSNet embedding size 512, got {feature.size}")
+            if feature.size != OSNET_EMBEDDING_SIZE:
+                raise RuntimeError(
+                    f"Expected OSNet embedding size {OSNET_EMBEDDING_SIZE}, got {feature.size}"
+                )
             norm = float(np.linalg.norm(feature))
             if norm > 1e-8:
                 output[int(track["track_id"])] = (feature / norm).astype(np.float32, copy=False)
@@ -262,7 +339,7 @@ def _box_iou(a: np.ndarray, b: np.ndarray) -> float:
     intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
     area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
     area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
-    return float(intersection / max(1e-7, area_a + area_b - intersection))
+    return float(intersection / max(NUMERIC_EPSILON, area_a + area_b - intersection))
 
 
 @dataclass
@@ -383,6 +460,21 @@ class LiteByteTracker:
             for track in self.tracks
             if track.lost_frames == 0
         ]
+
+    def predicted_tracks(self, frame_gap: int = 0) -> List[Dict[str, object]]:
+        """Return a non-mutating motion prediction for frames between detections."""
+        gap = max(0, int(frame_gap))
+        output: List[Dict[str, object]] = []
+        for track in self.tracks:
+            if track.lost_frames != 0:
+                continue
+            predicted_bbox = track.bbox + track.velocity * gap
+            output.append({
+                "track_id": track.track_id,
+                "bbox": predicted_bbox.round().astype(int).tolist(),
+                "conf": round(track.confidence, 3),
+            })
+        return output
 
     def reset(self) -> None:
         self.tracks.clear()

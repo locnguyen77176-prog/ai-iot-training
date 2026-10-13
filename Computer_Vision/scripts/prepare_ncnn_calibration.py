@@ -40,9 +40,9 @@ def evenly_spaced_indices(frame_count: int, requested: int) -> list[int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--videos", type=Path, default=Path("uploads"))
-    parser.add_argument("--output", type=Path, default=Path("datasets/calibration/yolo640"))
+    parser.add_argument("--output", type=Path, default=Path("datasets/calibration/yolo320"))
     parser.add_argument("--per-video", type=int, default=200)
-    parser.add_argument("--size", type=int, default=640)
+    parser.add_argument("--size", type=int, default=320)
     args = parser.parse_args()
 
     videos = sorted(
@@ -82,7 +82,7 @@ def main() -> int:
             }
         )
 
-    list_path = args.output.parent / "yolo640_calibration.txt"
+    list_path = args.output.parent / f"{args.output.name}_calibration.txt"
     list_path.write_text(
         "".join(f"{path.as_posix()}\n" for path in image_paths),
         encoding="utf-8",
@@ -94,7 +94,8 @@ def main() -> int:
         "image_list": str(list_path.resolve()),
         "sources": records,
     }
-    (args.output.parent / "manifest.json").write_text(
+    manifest_path = args.output.parent / f"{args.output.name}_manifest.json"
+    manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -104,4 +105,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

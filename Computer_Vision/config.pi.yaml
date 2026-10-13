@@ -6,25 +6,28 @@ detector:
   device: cpu
   identity_memory_seconds: 40
   identity_similarity_threshold: 0.82
-  imgsz: 640
+  imgsz: 320
   iou_threshold: 0.6
   model_path: models/yolo26n.pt
-  ncnn_detector_param: models/yolo26n_ncnn_int8/model.ncnn.param
-  ncnn_detector_bin: models/yolo26n_ncnn_int8/model.ncnn.bin
+  ncnn_detector_param: models/yolo26n_320_ncnn_int8/model.ncnn.param
+  ncnn_detector_bin: models/yolo26n_320_ncnn_int8/model.ncnn.bin
   ncnn_reid_param: models/osnet_x0_25_ncnn_model/model.ncnn.param
   ncnn_reid_bin: models/osnet_x0_25_ncnn_model/model.ncnn.bin
-  ncnn_num_threads: 4
+  ncnn_num_threads: 3
+  ncnn_reid_num_threads: 1
   ncnn_use_vulkan: false
+  ncnn_async_detection: true
+  ncnn_detection_interval_frames: 1
   reid_ambiguity_margin: 0.0
   reid_batch_size: 1
   reid_gallery_size: 5
-  reid_max_per_frame: 4
-  reid_max_periodic_per_frame: 4
+  reid_max_per_frame: 1
+  reid_max_periodic_per_frame: 1
   reid_min_bbox_height: 100
   reid_min_confidence: 0.55
-  reid_periodic_schedule_frames: 3
+  reid_periodic_schedule_frames: 10
   reid_recheck_seconds: 10.0
-  reid_sample_interval_frames: 15
+  reid_sample_interval_frames: 60
   reid_similarity_threshold: 0.78
   tracker: custom_fasttrack.yaml
 source:
@@ -41,10 +44,11 @@ source:
   height: 720
   path: auto_usb
   reconnect_interval: 3
-  target_fps: 15
+  target_fps: 10
   type: camera
   width: 1280
 ui:
+  jpeg_quality: 60
   show_fps: true
   show_trail: false
   trail_length: 30

@@ -1,8 +1,12 @@
 import unittest
+from collections import deque
+from concurrent.futures import Future
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
+from src.ncnn_backend import LiteByteTracker
 from src.tracker import PersistentIdentityManager, YOLOTracker
 from src.zone_counter import DualZoneCounter
 
@@ -33,7 +37,89 @@ class KalmanTimingTests(unittest.TestCase):
         self.assertEqual(calls, [1, 1, 1])
 
 
+class TrackerPipelineHelperTests(unittest.TestCase):
+    def test_builds_clipped_head_regions_from_backend_tracks(self):
+        tracks = YOLOTracker._build_tracked_objects(
+            [7], [[0, 5, 50, 105]], [0.8764], (100, 80, 3)
+        )
+
+        self.assertEqual(tracks[0]["track_id"], 7)
+        self.assertEqual(tracks[0]["bbox"], [0, 5, 50, 99])
+        self.assertEqual(tracks[0]["head_bbox"], [10, 5, 40, 28])
+        self.assertEqual(tracks[0]["conf"], 0.876)
+
+    def test_reid_selection_is_quality_filtered_prioritized_and_bounded(self):
+        wrapper = YOLOTracker.__new__(YOLOTracker)
+        wrapper.identity = SimpleNamespace(
+            local_to_stable={},
+            profiles={},
+            should_recheck=lambda _stable_id: False,
+        )
+        wrapper._frame_index = 6
+        wrapper._reid_last_sample = {}
+        wrapper.reid_sample_interval = 3
+        wrapper.reid_min_confidence = 0.5
+        wrapper.reid_min_bbox_height = 80
+        wrapper.reid_max_per_frame = 2
+        wrapper.reid_max_periodic_per_frame = 1
+        wrapper.reid_periodic_schedule_frames = 3
+        tracks = [
+            {"track_id": 1, "bbox": [0, 0, 20, 120], "conf": 0.7},
+            {"track_id": 2, "bbox": [0, 0, 20, 100], "conf": 0.9},
+            {"track_id": 3, "bbox": [0, 0, 20, 70], "conf": 0.99},
+        ]
+
+        selected = wrapper._select_reid_requests(tracks)
+
+        self.assertEqual([item["track_id"] for item in selected], [2, 1])
+
+    def test_async_ncnn_returns_motion_tracks_between_detector_results(self):
+        class ImmediateExecutor:
+            @staticmethod
+            def submit(function, *args):
+                future = Future()
+                future.set_result(function(*args))
+                return future
+
+        wrapper = YOLOTracker.__new__(YOLOTracker)
+        wrapper._detector_callable = lambda _frame: (
+            [{"bbox": [10, 10, 60, 110], "conf": 0.9}],
+            417.0,
+        )
+        wrapper.local_tracker = LiteByteTracker(new_track_threshold=0.3)
+        wrapper._detector_executor = ImmediateExecutor()
+        wrapper._detector_future = None
+        wrapper._detector_future_sequence = 0
+        wrapper._detector_future_generation = 0
+        wrapper._detector_last_submit_sequence = None
+        wrapper._detector_last_applied_sequence = None
+        wrapper._detector_generation = 0
+        wrapper._ncnn_sequence = 0
+        wrapper._detector_timestamps = deque(maxlen=30)
+        wrapper._detector_fps = 0.0
+        wrapper._detector_latency_ms = 0.0
+        wrapper.ncnn_detection_interval_frames = 1
+        frame = np.zeros((120, 80, 3), dtype=np.uint8)
+
+        first = wrapper._track_ncnn_async(frame, effective_gap=1)
+        second = wrapper._track_ncnn_async(frame, effective_gap=1)
+
+        self.assertEqual(first, [])
+        self.assertEqual(second[0]["track_id"], 1)
+
+
 class PersistentIdentityTests(unittest.TestCase):
+    def test_skips_color_descriptor_on_interpolated_frame(self):
+        manager = PersistentIdentityManager(memory_seconds=30)
+        frame = make_person_frame((20, 40, 220))
+        track = {"track_id": 1, "bbox": [30, 20, 90, 180], "conf": 0.9}
+        manager.update(frame, [track], now=1.0)
+
+        with patch.object(manager, "extract_descriptor", wraps=manager.extract_descriptor) as extract:
+            manager.update(frame, [track], now=1.1, update_appearance=False)
+
+        extract.assert_not_called()
+
     def test_suppresses_duplicate_boxes_and_keeps_existing_id(self):
         manager = PersistentIdentityManager(memory_seconds=0)
         frame = make_person_frame((20, 40, 220), [30, 20, 100, 190])
