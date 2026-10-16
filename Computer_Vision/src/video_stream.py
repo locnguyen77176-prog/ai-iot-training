@@ -75,6 +75,7 @@ class ThreadedVideoStream:
                  read_timeout_ms: int = 5000,
                  connect_warmup_frames: int = 5,
                  target_fps: Optional[float] = None,
+                 fourcc: Optional[str] = None,
                  flip_horizontal: bool = False,
                  anti_glare: Optional[Mapping[str, Any]] = None):
         self.src = normalize_video_source(src)
@@ -89,6 +90,8 @@ class ThreadedVideoStream:
         self.connect_warmup_frames = max(1, int(connect_warmup_frames))
         requested_fps = 0.0 if target_fps is None else float(target_fps)
         self.target_fps = requested_fps if requested_fps > 0 else 0.0
+        requested_fourcc = str(fourcc or "").strip().upper()
+        self.fourcc = requested_fourcc if len(requested_fourcc) == 4 else ""
         self.flip_horizontal = bool(flip_horizontal)
 
         glare_cfg = dict(anti_glare or {})
@@ -281,7 +284,8 @@ class ThreadedVideoStream:
                 ("Auto", cv2.CAP_ANY),
             ]
         else:
-            backends = [("Auto", cv2.CAP_ANY)]
+            # V4L2 negotiates FOURCC/resolution/FPS consistently on Raspberry Pi.
+            backends = [("V4L2", cv2.CAP_V4L2), ("Auto", cv2.CAP_ANY)]
 
         for backend_name, backend in backends:
             self._release_capture()
@@ -289,15 +293,43 @@ class ThreadedVideoStream:
                 self.cap = cv2.VideoCapture(camera_index, backend)
                 if self.cap is None or not self.cap.isOpened():
                     continue
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                # Select compressed USB transport before resolution and FPS.
+                if self.fourcc:
+                    self.cap.set(
+                        cv2.CAP_PROP_FOURCC,
+                        cv2.VideoWriter_fourcc(*self.fourcc),
+                    )
                 if self.width:
                     self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 if self.height:
                     self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 if self.target_fps > 0:
                     self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 grabbed, frame = self._read_warmup_frame()
                 if grabbed:
+                    actual_fourcc = ""
+                    actual_width = self.width or 0
+                    actual_height = self.height or 0
+                    actual_fps = self.target_fps
+                    get_property = getattr(self.cap, "get", None)
+                    if callable(get_property):
+                        try:
+                            fourcc_value = int(get_property(cv2.CAP_PROP_FOURCC))
+                            actual_fourcc = "".join(
+                                chr((fourcc_value >> (8 * index)) & 0xFF)
+                                for index in range(4)
+                            ).rstrip("\x00")
+                            actual_width = int(get_property(cv2.CAP_PROP_FRAME_WIDTH))
+                            actual_height = int(get_property(cv2.CAP_PROP_FRAME_HEIGHT))
+                            actual_fps = float(get_property(cv2.CAP_PROP_FPS))
+                        except (TypeError, ValueError, cv2.error):
+                            pass
+                    print(
+                        f"[VideoStream] Negotiated camera format: "
+                        f"{actual_fourcc or 'unknown'} {actual_width}x{actual_height} "
+                        f"@ {actual_fps:.1f} FPS."
+                    )
                     print(f"[VideoStream] Camera USB đang dùng backend {backend_name}.")
                     return True, frame
             except cv2.error:

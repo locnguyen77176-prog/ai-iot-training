@@ -52,6 +52,7 @@ def main():
         read_timeout_ms=src_cfg.get("read_timeout_ms", 5000),
         connect_warmup_frames=src_cfg.get("connect_warmup_frames", 5),
         target_fps=src_cfg.get("target_fps", 15),
+        fourcc=src_cfg.get("fourcc"),
         flip_horizontal=src_cfg.get("flip_horizontal", False),
         anti_glare=src_cfg.get("anti_glare", {})
     ).start()

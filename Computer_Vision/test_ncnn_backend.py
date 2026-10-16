@@ -8,6 +8,7 @@ from src.ncnn_backend import (
     NcnnYoloDetector,
     _nms_xyxy,
     _validate_detector_input_size,
+    prepare_detector_input,
 )
 
 
@@ -27,6 +28,17 @@ class NcnnMetadataTests(unittest.TestCase):
 
 
 class NcnnPostprocessTests(unittest.TestCase):
+    def test_prepares_720p_as_exact_320_square_with_reversible_transform(self):
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        image, transform = prepare_detector_input(frame, 320)
+
+        self.assertEqual(image.shape, (320, 320, 3))
+        self.assertTrue(image.flags.c_contiguous)
+        self.assertEqual(transform, (720, 1280, 0.25, 0, 70))
+        self.assertTrue(np.all(image[:70] == 114))
+        self.assertTrue(np.all(image[250:] == 114))
+
     def test_accepts_both_common_yolo_output_layouts(self):
         channels_first = np.zeros((1, 84, 8400), dtype=np.float32)
         candidates_first = np.zeros((1, 8400, 84), dtype=np.float32)

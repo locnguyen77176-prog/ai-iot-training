@@ -174,6 +174,55 @@ class CameraBackendTests(unittest.TestCase):
         self.assertTrue(grabbed)
         self.assertIn((cv2.CAP_PROP_FPS, 15.0), properties)
 
+    def test_usb_requests_mjpg_before_resolution_and_fps(self):
+        properties = []
+
+        class FakeCapture:
+            def __init__(self, _index, _backend):
+                self.released = False
+
+            def isOpened(self):
+                return not self.released
+
+            def set(self, prop, value):
+                properties.append((prop, value))
+                return True
+
+            def read(self):
+                return True, np.zeros((720, 1280, 3), dtype=np.uint8)
+
+            def release(self):
+                self.released = True
+
+        stream = ThreadedVideoStream(
+            src=0,
+            width=1280,
+            height=720,
+            target_fps=15,
+            fourcc="mjpg",
+        )
+        with patch("platform.system", return_value="Linux"), patch(
+            "cv2.VideoCapture", side_effect=FakeCapture
+        ):
+            grabbed, _ = stream._open_usb_camera(0)
+
+        self.assertTrue(grabbed)
+        fourcc_index = next(
+            index for index, (prop, _value) in enumerate(properties)
+            if prop == cv2.CAP_PROP_FOURCC
+        )
+        width_index = next(
+            index for index, (prop, _value) in enumerate(properties)
+            if prop == cv2.CAP_PROP_FRAME_WIDTH
+        )
+        fps_index = next(
+            index for index, (prop, _value) in enumerate(properties)
+            if prop == cv2.CAP_PROP_FPS
+        )
+        self.assertLess(fourcc_index, width_index)
+        self.assertLess(fourcc_index, fps_index)
+        self.assertEqual(stream.fourcc, "MJPG")
+
     def test_rtsp_uses_open_and_read_timeouts(self):
         opened_with = []
 

@@ -4,7 +4,7 @@ import time
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass, field
-from multiprocessing import get_context
+from multiprocessing import get_context, shared_memory
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -483,6 +483,8 @@ class YOLOTracker:
         self._detector_executor: Optional[ProcessPoolExecutor] = None
         self._detector_callable = None
         self._detector_future: Optional[Future] = None
+        self._detector_input_shm: Optional[shared_memory.SharedMemory] = None
+        self._detector_input_view: Optional[np.ndarray] = None
         self._detector_future_frame: Optional[np.ndarray] = None
         self._detector_future_sequence = 0
         self._detector_future_generation = 0
@@ -507,9 +509,10 @@ class YOLOTracker:
                 LiteByteTracker,
                 NcnnOSNetEncoder,
                 NcnnYoloDetector,
-                detect_in_process,
+                detect_shared_in_process,
                 detector_process_ready,
                 initialize_detector_process,
+                prepare_detector_input,
             )
 
             detector_param = _resolve_project_path(ncnn_detector_param)
@@ -532,21 +535,54 @@ class YOLOTracker:
                     "use_vulkan": ncnn_use_vulkan,
                 }
                 self.model = None
-                self._detector_callable = detect_in_process
-                self._detector_executor = ProcessPoolExecutor(
-                    max_workers=1,
-                    mp_context=get_context("spawn"),
-                    initializer=initialize_detector_process,
-                    initargs=(detector_config,),
-                )
-                detector_ready = self._detector_executor.submit(
-                    detector_process_ready
-                ).result(timeout=60)
+                self._detector_callable = detect_shared_in_process
+                self._detector_preprocessor = prepare_detector_input
+                detector_shape = (self.imgsz, self.imgsz, 3)
+                detector_bytes = int(np.prod(detector_shape))
+                try:
+                    self._detector_input_shm = shared_memory.SharedMemory(
+                        create=True,
+                        size=detector_bytes,
+                    )
+                    self._detector_input_view = np.ndarray(
+                        detector_shape,
+                        dtype=np.uint8,
+                        buffer=self._detector_input_shm.buf,
+                    )
+                    self._detector_executor = ProcessPoolExecutor(
+                        max_workers=1,
+                        mp_context=get_context("spawn"),
+                        initializer=initialize_detector_process,
+                        initargs=(
+                            detector_config,
+                            self._detector_input_shm.name,
+                            detector_shape,
+                        ),
+                    )
+                    detector_ready = self._detector_executor.submit(
+                        detector_process_ready
+                    ).result(timeout=60)
+                except Exception:
+                    if self._detector_executor is not None:
+                        self._detector_executor.shutdown(
+                            wait=False,
+                            cancel_futures=True,
+                        )
+                        self._detector_executor = None
+                    self._release_detector_shared_memory()
+                    raise
                 if not detector_ready:
+                    self._detector_executor.shutdown(
+                        wait=False,
+                        cancel_futures=True,
+                    )
+                    self._detector_executor = None
+                    self._release_detector_shared_memory()
                     raise RuntimeError("NCNN detector process failed to initialize")
                 print(
                     f"[Tracker] YOLO26n NCNN runs in a dedicated process "
-                    f"({ncnn_num_threads} threads, imgsz: {self.imgsz})"
+                    f"({ncnn_num_threads} threads, imgsz: {self.imgsz}, "
+                    f"shared input: {detector_bytes // 1024} KiB)"
                 )
             else:
                 print(
@@ -714,16 +750,26 @@ class YOLOTracker:
         return requests
 
     def _submit_ncnn_detection(self, frame: np.ndarray) -> None:
-        if self._detector_executor is None:
+        if (
+            self._detector_executor is None
+            or self._detector_input_view is None
+        ):
             return
         self._detector_future_sequence = self._ncnn_sequence
         self._detector_future_generation = self._detector_generation
         self._detector_last_submit_sequence = self._ncnn_sequence
+        preprocess_started = time.perf_counter()
+        detector_input, transform = self._detector_preprocessor(frame, self.imgsz)
+        np.copyto(self._detector_input_view, detector_input, casting="no")
+        preprocess_ms = (time.perf_counter() - preprocess_started) * 1000.0
+        # Keep the full-resolution, unannotated frame locally for OSNet. Only the
+        # 320x320 tensor lives in shared memory and crosses into the YOLO worker.
         detector_frame = np.ascontiguousarray(frame.copy())
         self._detector_future_frame = detector_frame
         self._detector_future = self._detector_executor.submit(
             self._detector_callable,
-            detector_frame,
+            transform,
+            preprocess_ms,
         )
 
     def _record_detector_completion(self, inference_ms: float) -> None:
@@ -920,5 +966,21 @@ class YOLOTracker:
             self._detector_future = None
         self._detector_future_frame = None
         if self._detector_executor is not None:
-            self._detector_executor.shutdown(wait=False, cancel_futures=True)
+            self._detector_executor.shutdown(wait=True, cancel_futures=True)
             self._detector_executor = None
+        self._release_detector_shared_memory()
+
+    def _release_detector_shared_memory(self) -> None:
+        """Close and unlink the parent-owned detector input buffer exactly once."""
+        self._detector_input_view = None
+        segment = self._detector_input_shm
+        self._detector_input_shm = None
+        if segment is None:
+            return
+        try:
+            segment.close()
+        finally:
+            try:
+                segment.unlink()
+            except FileNotFoundError:
+                pass

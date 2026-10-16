@@ -41,10 +41,11 @@ source:
     min_bright_ratio: 0.04
     threshold: 210
   flip_horizontal: false
+  fourcc: MJPG
   height: 720
   path: auto_usb
   reconnect_interval: 3
-  target_fps: 10
+  target_fps: 15
   type: camera
   width: 1280
 ui:

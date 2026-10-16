@@ -5,12 +5,12 @@
 Tối ưu hệ thống nhận diện và đếm người trên Raspberry Pi 4 để:
 
 - Pipeline xử lý, tracking, đếm vùng và video đầu ra hướng tới mức ổn định `7–10 FPS`.
-- Giữ nguyên YOLO26n NCNN INT8 tại kích thước đầu vào `640 × 640`.
+- Giữ nguyên YOLO26n NCNN INT8 tại kích thước đầu vào `320 × 320`.
 - Giữ nguyên OSNet x0.25 NCNN FP32, không lượng tử OSNet xuống INT8.
 - Không bổ sung module tăng tốc hoặc phần cứng bên ngoài.
 - Giới hạn tải khi trong khung hình có nhiều người.
 
-> Lưu ý: `7–10 FPS` là mục tiêu của toàn bộ pipeline theo kiến trúc đa nhịp. Với thời gian suy luận YOLO khoảng `417 ms`, detector 640 × 640 không thể tạo 7–10 kết quả YOLO mới mỗi giây trên Pi 4. Các frame giữa hai lần detection được cập nhật bằng motion prediction.
+> Lưu ý: `7–10 FPS` là mục tiêu của toàn bộ pipeline theo kiến trúc đa nhịp. Detector 320 × 320 không nhất thiết tạo đủ 7–10 kết quả YOLO mới mỗi giây; các frame giữa hai lần detection được cập nhật bằng motion prediction. Baseline thực tế trước tối ưu MJPG/shared memory là khoảng `PIPE 5 FPS`, `DET 3,3–5 FPS`, và `116–217 ms/detection` tùy nhiệt độ và tải CPU.
 
 ## 2. Nút thắt trước khi tối ưu
 
@@ -43,18 +43,20 @@ Pipeline được chuyển sang kiến trúc đa nhịp:
 
 ```text
                          ┌──────────────────────────────┐
-Camera 10 FPS ──────────►│ Pipeline chính               │
+Camera MJPG 15 FPS ─────►│ Pipeline chính               │
                          │ - Motion prediction          │
                          │ - Persistent Identity        │
                          │ - Dual-Zone FSM              │
                          │ - Render và JPEG             │
                          └──────────────┬───────────────┘
-                                        │ frame mới nhất
+                                        │ letterbox 320 × 320
                                         ▼
                          ┌──────────────────────────────┐
                          │ Process YOLO NCNN riêng      │
                          │ - 3 CPU threads              │
                          │ - Tối đa một inference       │
+                         │ - Shared memory 300 KiB      │
+                         │ - Không pickle frame 720p    │
                          │ - Không tạo backlog          │
                          └──────────────┬───────────────┘
                                         │ detection mới
@@ -72,9 +74,10 @@ Các hàm worker process được thêm trong `src/ncnn_backend.py`:
 
 - `initialize_detector_process()` tải duy nhất một model YOLO trong process con.
 - `detector_process_ready()` kiểm tra model đã tải thành công.
-- `detect_in_process()` chạy inference và trả về detection cùng thời gian suy luận.
+- `prepare_detector_input()` tạo tensor letterbox 320 × 320 trước ranh giới process.
+- `detect_shared_in_process()` đọc tensor trực tiếp từ shared memory, chạy inference và trả về detection cùng thời gian xử lý.
 
-`YOLOTracker` sử dụng `ProcessPoolExecutor` với đúng một worker. Hệ thống không chạy nhiều YOLO song song nên không làm tăng đột biến RAM và CPU.
+`YOLOTracker` sử dụng `ProcessPoolExecutor` với đúng một worker và một vùng shared memory cố định. Hệ thống không chạy nhiều YOLO song song nên buffer không bị ghi đè và không làm tăng đột biến RAM/CPU.
 
 ### 4.2. Motion prediction giữa hai lần detection
 
@@ -148,21 +151,69 @@ OPENBLAS_NUM_THREADS: "1"
 
 OpenCV cũng được giới hạn một thread trong NCNN runtime. Mục tiêu là dành đủ tài nguyên cho web server, tracker, OSNet và JPEG thay vì để các thư viện cùng tạo nhiều thread vượt quá bốn lõi của Pi.
 
-### 4.8. Giảm chi phí camera và JPEG
+### 4.8. Camera USB MJPG thay cho YUYV (phương án C)
 
 Cấu hình Pi hiện tại:
 
 ```yaml
 source:
-  target_fps: 10
+  fourcc: MJPG
+  width: 1280
+  height: 720
+  target_fps: 15
 
 ui:
   jpeg_quality: 60
 ```
 
-Camera chỉ cung cấp đúng nhịp mục tiêu. JPEG quality 60 giảm thời gian encode và băng thông MJPEG nhưng vẫn đủ rõ cho dashboard giám sát.
+FOURCC được đặt trước width/height/FPS khi mở camera bằng V4L2. C270 vì vậy truyền frame JPEG nén qua USB thay vì YUYV thô. YUYV 1280 × 720 cần khoảng `1,84 MB/frame` trước khi OpenCV chuyển sang BGR; MJPG giảm mạnh băng thông USB và giúp camera duy trì nhịp ổn định hơn. Pi vẫn phải giải mã JPEG, vì vậy kết quả phải được đo thực tế thay vì mặc định MJPG luôn nhanh hơn.
 
-### 4.9. Tách số đo PIPE và DET
+Log khởi động in format camera đã thương lượng. Sau khi deploy phải thấy dạng:
+
+```text
+[VideoStream] Negotiated camera format: MJPG 1280x720 @ 15.0 FPS.
+```
+
+Có thể kiểm tra thêm trên Pi khi container đang chạy:
+
+```bash
+v4l2-ctl --device=/dev/video0 --get-fmt-video
+v4l2-ctl --device=/dev/video0 --get-parm
+```
+
+Nếu camera/driver không chấp nhận MJPG, log sẽ cho thấy format thực tế khác. Không kết luận đã tối ưu chỉ dựa trên giá trị trong YAML.
+
+JPEG quality 60 của WebApp là bước nén đầu ra riêng, giảm thời gian encode và băng thông dashboard nhưng vẫn đủ rõ để giám sát.
+
+### 4.9. Letterbox trước IPC và shared memory (phương án D)
+
+Pipeline cũ copy và pickle toàn bộ frame BGR 1280 × 720 vào `ProcessPoolExecutor`:
+
+```text
+1280 × 720 × 3 = 2.764.800 byte/frame
+```
+
+Pipeline mới letterbox tại process chính, sau đó ghi đúng tensor input vào shared memory:
+
+```text
+320 × 320 × 3 = 307.200 byte/frame (300 KiB)
+```
+
+Lượng dữ liệu detector dùng chung giảm đúng 9 lần. Worker chỉ nhận metadata nhỏ gồm:
+
+```text
+original_height, original_width, ratio, pad_x, pad_y
+```
+
+Bbox được biến đổi ngược về tọa độ 1280 × 720 bằng cùng `ratio/pad`, nên hình học không thay đổi. Tiền xử lý vẫn giữ `INTER_LINEAR`, padding 114, BGR → RGB và chuẩn hóa `1/255` như trước.
+
+Frame 1280 × 720 gốc không được gửi qua pipe. Nó chỉ được giữ cục bộ cho OSNet crop đúng người tại thời điểm detection và cho WebApp. Vì vậy OSNet vẫn nhận ảnh độ phân giải đầy đủ, không dùng ảnh 320 × 320.
+
+Chỉ có một inference đang hoạt động. Process chính không ghi frame mới vào shared memory cho tới khi future cũ hoàn thành, tránh race condition và frame bị trộn. Khi ứng dụng dừng, shared memory được close/unlink trong `YOLOTracker.close()`.
+
+Thay đổi này tối ưu IPC và độ ổn định latency; nó không thay đổi trọng số, input model hay thuật toán NMS, vì vậy không được phép làm giảm độ chính xác đáng kể. Test hồi quy xác nhận ảnh 1280 × 720 được ánh xạ đúng thành nội dung 320 × 180 với padding trên/dưới 70 pixel.
+
+### 4.10. Tách số đo PIPE và DET
 
 Dashboard và API hiển thị riêng:
 
@@ -198,9 +249,10 @@ detector:
   reid_sample_interval_frames: 60
 
 source:
+  fourcc: MJPG
   width: 1280
   height: 720
-  target_fps: 10
+  target_fps: 15
 
 ui:
   jpeg_quality: 60
@@ -225,30 +277,30 @@ dữ liệu gán nhãn thực tế.
 
 | File | Nội dung |
 |---|---|
-| `src/ncnn_backend.py` | Worker process NCNN, validation metadata, motion prediction |
-| `src/tracker.py` | Pipeline detector bất đồng bộ, tracking xen kẽ, giới hạn ReID |
+| `src/ncnn_backend.py` | Letterbox 320, worker NCNN đọc shared memory, validation metadata, motion prediction |
+| `src/tracker.py` | Shared-memory lifecycle, pipeline detector bất đồng bộ, tracking xen kẽ, giới hạn ReID |
+| `src/video_stream.py` | Ép FOURCC MJPG trước resolution/FPS và log format camera thực tế |
 | `web/server.py` | JPEG configurable, telemetry detector |
 | `web/static/js/app.js` | Hiển thị riêng PIPE và DET |
 | `config.pi.yaml` | Cấu hình Pi 4 tối ưu |
 | `docker-compose.pi.yml` | Giới hạn OpenMP runtime |
 | `Dockerfile.pi` | Biến môi trường CPU cho container |
 | `main.py` | Truyền cấu hình mới và giải phóng detector process |
-| `test_ncnn_backend.py` | Test metadata và motion prediction |
+| `test_ncnn_backend.py` | Test metadata, letterbox 720p → 320 và motion prediction |
 | `test_tracking.py` | Test scheduler ReID, async detector và descriptor cadence |
+| `test_video_stream.py` | Test thứ tự thương lượng MJPG/width/FPS |
 
 ## 7. Kết quả kiểm tra trên máy phát triển
 
 ```text
-40 tests passed
+42 tests passed
 Python compile: passed
 Docker Compose validation: passed
-Multiprocessing pipeline test: 9.99 FPS
-30-person identity tracking simulation: 1045 FPS
 ```
 
-Các phép thử trên máy phát triển xác nhận pipeline không còn bị chặn bởi tác vụ detector và phần tracking/identity có đủ dư địa cho vài chục track.
+Các phép thử trên máy phát triển xác nhận thứ tự thương lượng MJPG, phép letterbox 720p → 320, metadata ánh xạ ngược, pipeline detector bất đồng bộ và lifecycle cơ bản không bị hồi quy.
 
-Đây không phải kết quả benchmark cuối cùng trên Raspberry Pi. FPS thực tế còn phụ thuộc vào nhiệt độ, nguồn điện, camera, thẻ nhớ và tình trạng throttling.
+Đây không phải kết quả benchmark FPS trên Raspberry Pi. Máy phát triển không có camera C270 + NCNN ARM64 giống Pi; FPS thực tế chỉ được chốt sau khi build image mới và chạy trên Pi trong cùng điều kiện với baseline.
 
 ## 8. Build và triển khai image mới
 
@@ -312,12 +364,25 @@ Các trường cần quan sát:
 }
 ```
 
+Lấy ít nhất 12 mẫu, mỗi mẫu cách nhau 5 giây sau khi hệ thống đã chạy ổn định hai phút:
+
+```bash
+for i in $(seq 1 12); do
+  date '+%H:%M:%S'
+  curl -s http://127.0.0.1:8000/api/camera/status
+  sleep 5
+done
+```
+
+So sánh với baseline trong cùng cảnh, cùng số người, cùng nhiệt độ. Không so sánh lần chạy camera trống với lần chạy đám đông.
+
 Mục tiêu chấp nhận:
 
 ```text
 PIPE/ai_fps: 7–10 FPS
 display_fps: 7–10 FPS
-DET/detector_fps: khoảng 1.8–2.5 FPS với model 640 hiện tại
+DET/detector_fps: không thấp hơn baseline 3,3–5 FPS; kỳ vọng tăng nếu IPC/camera là nút thắt
+detector_latency_ms: trung vị thấp hơn baseline và không còn dao động 116 → 217 ms bất thường
 Container: healthy
 Không restart hoặc exit 139
 ```
@@ -341,9 +406,9 @@ Nếu nhiệt độ cao hoặc Pi bị throttling, FPS sẽ giảm dù phần m�
 
 ## 11. Giới hạn còn lại
 
-- YOLO 640 × 640 vẫn là nút thắt chính.
+- YOLO26n INT8 320 × 320 trên CPU vẫn là nút thắt chính nếu `detector_latency_ms` còn cao sau khi loại bỏ chi phí camera/IPC.
 - Motion prediction không thay thế được detection mới trong trường hợp người di chuyển quá nhanh, bị che khuất lâu hoặc đám đông giao nhau dày đặc.
 - Mức ổn định với vài chục người phải được xác nhận bằng video/camera thực tế trên Pi.
 - Độ chính xác đếm phải được đánh giá bằng tập video có nhãn, không chỉ quan sát độ mượt.
 
-Nếu bắt buộc cả detector cũng phải đạt 7–10 FPS, bước tiếp theo là export và lượng tử YOLO26n INT8 ở `320 × 320` hoặc thử `416 × 416`, sau đó đo lại recall và độ chính xác đếm. OSNet vẫn có thể giữ FP32.
+Nếu detector vẫn không đạt yêu cầu sau C và D, bước tiếp theo là benchmark 3/4 thread, kiểm tra throttling, sau đó cân nhắc chuyển preprocess + YOLO + decode/NMS + LiteByteTracker sang C++ NCNN. Không hạ input dưới 320 nếu chưa đánh giá lại recall và độ chính xác đếm. OSNet vẫn giữ NCNN FP32.

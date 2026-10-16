@@ -82,10 +82,15 @@ class TrackerPipelineHelperTests(unittest.TestCase):
                 return future
 
         wrapper = YOLOTracker.__new__(YOLOTracker)
-        wrapper._detector_callable = lambda _frame: (
+        wrapper._detector_callable = lambda _transform, _preprocess_ms: (
             [{"bbox": [10, 10, 60, 110], "conf": 0.9}],
             417.0,
         )
+        wrapper._detector_preprocessor = lambda _frame, _imgsz: (
+            np.zeros((320, 320, 3), dtype=np.uint8),
+            (120, 80, 2.6666666667, 53, 0),
+        )
+        wrapper._detector_input_view = np.zeros((320, 320, 3), dtype=np.uint8)
         wrapper.local_tracker = LiteByteTracker(new_track_threshold=0.3)
         wrapper._detector_executor = ImmediateExecutor()
         wrapper._detector_future = None
@@ -99,6 +104,7 @@ class TrackerPipelineHelperTests(unittest.TestCase):
         wrapper._detector_fps = 0.0
         wrapper._detector_latency_ms = 0.0
         wrapper.ncnn_detection_interval_frames = 1
+        wrapper.imgsz = 320
         frame = np.zeros((120, 80, 3), dtype=np.uint8)
 
         first = wrapper._track_ncnn_async(frame, effective_gap=1)

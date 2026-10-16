@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import time
+from multiprocessing import shared_memory
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -20,6 +21,11 @@ PERSON_CLASS_SCORE_ROW = 4
 OSNET_EMBEDDING_SIZE = 512
 NUMERIC_EPSILON = 1e-7
 _PROCESS_DETECTOR = None
+_PROCESS_DETECTOR_SHM = None
+_PROCESS_DETECTOR_INPUT = None
+
+# original_height, original_width, resize_ratio, pad_x, pad_y
+LetterboxTransform = Tuple[int, int, float, int, int]
 
 
 def _read_model_metadata(param_path: str) -> dict:
@@ -65,11 +71,43 @@ def _validate_detector_input_size(param_path: str, imgsz: int) -> int:
     return runtime_size
 
 
-def initialize_detector_process(detector_config: dict) -> None:
+def prepare_detector_input(
+    frame: np.ndarray, imgsz: int
+) -> Tuple[np.ndarray, LetterboxTransform]:
+    """Create the fixed detector tensor before crossing the process boundary."""
+    if frame is None or frame.size == 0:
+        raise ValueError("Cannot preprocess an empty detector frame")
+    height, width = frame.shape[:2]
+    ratio = min(float(imgsz) / width, float(imgsz) / height)
+    resized_w = max(1, int(round(width * ratio)))
+    resized_h = max(1, int(round(height * ratio)))
+    resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR)
+    pad_x = (int(imgsz) - resized_w) // 2
+    pad_y = (int(imgsz) - resized_h) // 2
+    canvas = np.full((int(imgsz), int(imgsz), 3), 114, dtype=np.uint8)
+    canvas[pad_y:pad_y + resized_h, pad_x:pad_x + resized_w] = resized
+    return np.ascontiguousarray(canvas), (height, width, ratio, pad_x, pad_y)
+
+
+def initialize_detector_process(
+    detector_config: dict,
+    shared_memory_name: Optional[str] = None,
+    shared_memory_shape: Optional[Tuple[int, int, int]] = None,
+) -> None:
     """Load one NCNN detector inside a dedicated worker process."""
-    global _PROCESS_DETECTOR
+    global _PROCESS_DETECTOR, _PROCESS_DETECTOR_SHM, _PROCESS_DETECTOR_INPUT
     cv2.setNumThreads(1)
     _PROCESS_DETECTOR = NcnnYoloDetector(**detector_config)
+    if shared_memory_name and shared_memory_shape:
+        _PROCESS_DETECTOR_SHM = shared_memory.SharedMemory(
+            name=shared_memory_name,
+            create=False,
+        )
+        _PROCESS_DETECTOR_INPUT = np.ndarray(
+            tuple(shared_memory_shape),
+            dtype=np.uint8,
+            buffer=_PROCESS_DETECTOR_SHM.buf,
+        )
 
 
 def detector_process_ready() -> bool:
@@ -84,6 +122,22 @@ def detect_in_process(frame: np.ndarray) -> Tuple[List[Dict[str, object]], float
     started_at = time.perf_counter()
     detections = _PROCESS_DETECTOR.detect(frame)
     return detections, (time.perf_counter() - started_at) * 1000.0
+
+
+def detect_shared_in_process(
+    transform: LetterboxTransform,
+    preprocess_ms: float = 0.0,
+) -> Tuple[List[Dict[str, object]], float]:
+    """Run NCNN directly on the process-shared 320x320 detector input."""
+    if _PROCESS_DETECTOR is None or _PROCESS_DETECTOR_INPUT is None:
+        raise RuntimeError("Shared-memory NCNN detector was not initialized")
+    started_at = time.perf_counter()
+    detections = _PROCESS_DETECTOR.detect_preprocessed(
+        _PROCESS_DETECTOR_INPUT,
+        transform,
+    )
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    return detections, max(0.0, float(preprocess_ms)) + elapsed_ms
 
 
 def _load_ncnn():
@@ -197,16 +251,8 @@ class NcnnYoloDetector:
         self.ncnn, self.net = _load_net(param_path, bin_path, self.num_threads, use_vulkan)
 
     def _letterbox(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
-        height, width = frame.shape[:2]
-        ratio = min(self.imgsz / width, self.imgsz / height)
-        resized_w = max(1, int(round(width * ratio)))
-        resized_h = max(1, int(round(height * ratio)))
-        resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR)
-        pad_x = (self.imgsz - resized_w) // 2
-        pad_y = (self.imgsz - resized_h) // 2
-        canvas = np.full((self.imgsz, self.imgsz, 3), 114, dtype=np.uint8)
-        canvas[pad_y:pad_y + resized_h, pad_x:pad_x + resized_w] = resized
-        return canvas, ratio, pad_x, pad_y
+        image, (_, _, ratio, pad_x, pad_y) = prepare_detector_input(frame, self.imgsz)
+        return image, ratio, pad_x, pad_y
 
     @staticmethod
     def _as_predictions(output: np.ndarray) -> np.ndarray:
@@ -229,7 +275,20 @@ class NcnnYoloDetector:
     def detect(self, frame: np.ndarray) -> List[Dict[str, object]]:
         if frame is None or frame.size == 0:
             return []
-        image, ratio, pad_x, pad_y = self._letterbox(frame)
+        image, transform = prepare_detector_input(frame, self.imgsz)
+        return self.detect_preprocessed(image, transform)
+
+    def detect_preprocessed(
+        self,
+        image: np.ndarray,
+        transform: LetterboxTransform,
+    ) -> List[Dict[str, object]]:
+        """Infer an already-letterboxed image and restore original coordinates."""
+        if image.shape != (self.imgsz, self.imgsz, 3):
+            raise ValueError(
+                f"Expected detector input {(self.imgsz, self.imgsz, 3)}, got {image.shape}"
+            )
+        original_height, original_width, ratio, pad_x, pad_y = transform
         mat = self.ncnn.Mat.from_pixels(
             image,
             self.ncnn.Mat.PixelType.PIXEL_BGR2RGB,
@@ -257,9 +316,8 @@ class NcnnYoloDetector:
         boxes[:, 3] = xywh[:, 1] + xywh[:, 3] * 0.5
         boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad_x) / ratio
         boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad_y) / ratio
-        height, width = frame.shape[:2]
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, width - 1)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, height - 1)
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, original_width - 1)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, original_height - 1)
         valid = (boxes[:, 2] - boxes[:, 0] >= 2) & (boxes[:, 3] - boxes[:, 1] >= 2)
         boxes, scores = boxes[valid], scores[valid]
         keep = _nms_xyxy(boxes, scores, self.iou)
