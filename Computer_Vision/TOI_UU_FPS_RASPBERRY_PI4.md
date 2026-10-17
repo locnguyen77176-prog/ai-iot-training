@@ -412,3 +412,48 @@ Nếu nhiệt độ cao hoặc Pi bị throttling, FPS sẽ giảm dù phần m�
 - Độ chính xác đếm phải được đánh giá bằng tập video có nhãn, không chỉ quan sát độ mượt.
 
 Nếu detector vẫn không đạt yêu cầu sau C và D, bước tiếp theo là benchmark 3/4 thread, kiểm tra throttling, sau đó cân nhắc chuyển preprocess + YOLO + decode/NMS + LiteByteTracker sang C++ NCNN. Không hạ input dưới 320 nếu chưa đánh giá lại recall và độ chính xác đếm. OSNet vẫn giữ NCNN FP32.
+
+## 12. Tối ưu an toàn vòng 2 (không thay đổi độ chính xác AI)
+
+Các thay đổi dưới đây không sửa trọng số model, kích thước detector 320×320,
+confidence/IoU, NMS, lịch ReID hoặc ảnh 1280×720 dùng cho YOLO/OSNet.
+
+### 12.1. Letterbox trực tiếp vào shared memory
+
+`prepare_detector_input_into()` resize và letterbox thẳng vào buffer 320×320 dùng
+chung với detector. Pipeline không còn tạo thêm canvas 300 KiB rồi `np.copyto()`
+sang shared memory. Phép resize, padding 114 và phép biến đổi bbox giữ nguyên.
+
+### 12.2. Xác minh format camera thực tế
+
+Sau khi yêu cầu MJPG, độ phân giải và FPS, chương trình đọc lại FOURCC/width/height/FPS.
+Nếu backend V4L2 âm thầm trả về YUYV hoặc FPS thấp hơn yêu cầu, chương trình thử backend
+tiếp theo. Nếu camera vẫn phải fallback, hệ thống tiếp tục hoạt động an toàn nhưng ghi
+cảnh báo rõ ràng và trả format thực tế trong `/api/camera/status`.
+
+Các trường mới: `source_fps`, `camera_fourcc`, `camera_width`, `camera_height` và
+`camera_negotiated_fps`.
+
+### 12.3. Giảm tải giao diện, không giảm ảnh AI
+
+YOLO và OSNet tiếp tục nhận frame 1280×720. Chỉ ảnh sau khi đã vẽ overlay, chuẩn bị gửi
+cho trình duyệt, được resize xuống 960×540 và giới hạn tối đa 10 FPS. Khi không có client
+đang mở `/video_feed`, hệ thống không vẽ/encode JPEG, nhường CPU và băng thông RAM cho AI.
+
+```yaml
+ui:
+  jpeg_quality: 60
+  stream_width: 960
+  stream_height: 540
+  max_display_fps: 10
+```
+
+Đây chỉ là thay đổi độ phân giải hiển thị web; tọa độ tracking, vùng đếm, crop OSNet và
+đầu vào detector không thay đổi.
+
+### 12.4. Telemetry xác định nút thắt
+
+API camera bổ sung `pipeline_latency_ms`, `render_latency_ms`, `reid_latency_ms` và
+`reid_batch_size`. Sau khi deploy, lấy ít nhất 12 mẫu khi dashboard đang mở để quyết định
+bước tiếp theo. Không khẳng định đạt 8–10 FPS chỉ từ test trên máy phát triển; kết quả phải
+được đo trên Pi 4 với đúng camera, nguồn điện và cảnh thử nghiệm.

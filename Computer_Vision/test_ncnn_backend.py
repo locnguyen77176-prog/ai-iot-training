@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 
 from src.ncnn_backend import (
@@ -9,6 +10,7 @@ from src.ncnn_backend import (
     _nms_xyxy,
     _validate_detector_input_size,
     prepare_detector_input,
+    prepare_detector_input_into,
 )
 
 
@@ -38,6 +40,43 @@ class NcnnPostprocessTests(unittest.TestCase):
         self.assertEqual(transform, (720, 1280, 0.25, 0, 70))
         self.assertTrue(np.all(image[:70] == 114))
         self.assertTrue(np.all(image[250:] == 114))
+
+    def test_prepares_directly_into_reusable_detector_buffer(self):
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        frame[:, :, 1] = 77
+        output = np.empty((320, 320, 3), dtype=np.uint8)
+
+        transform = prepare_detector_input_into(frame, 320, output)
+
+        self.assertEqual(transform, (720, 1280, 0.25, 0, 70))
+        self.assertTrue(np.all(output[:70] == 114))
+        self.assertTrue(np.all(output[70:250, :, 1] == 77))
+        self.assertTrue(np.all(output[250:] == 114))
+
+    def test_reusable_detector_buffer_requires_exact_shape_and_dtype(self):
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        with self.assertRaisesRegex(ValueError, "Expected uint8 detector output"):
+            prepare_detector_input_into(
+                frame,
+                320,
+                np.empty((640, 640, 3), dtype=np.uint8),
+            )
+
+    def test_direct_shared_buffer_is_pixel_identical_to_reference_letterbox(self):
+        rng = np.random.default_rng(1234)
+        frame = rng.integers(0, 256, size=(720, 1280, 3), dtype=np.uint8)
+        expected = np.full((320, 320, 3), 114, dtype=np.uint8)
+        expected[70:250] = cv2.resize(
+            frame,
+            (320, 180),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        actual = np.empty_like(expected)
+
+        transform = prepare_detector_input_into(frame, 320, actual)
+
+        self.assertEqual(transform, (720, 1280, 0.25, 0, 70))
+        np.testing.assert_array_equal(actual, expected)
 
     def test_accepts_both_common_yolo_output_layouts(self):
         channels_first = np.zeros((1, 84, 8400), dtype=np.float32)

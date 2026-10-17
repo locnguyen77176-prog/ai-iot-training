@@ -223,6 +223,56 @@ class CameraBackendTests(unittest.TestCase):
         self.assertLess(fourcc_index, fps_index)
         self.assertEqual(stream.fourcc, "MJPG")
 
+    def test_linux_retries_when_first_backend_ignores_mjpg(self):
+        attempted_backends = []
+
+        class FakeCapture:
+            def __init__(self, _index, backend):
+                attempted_backends.append(backend)
+                self.backend = backend
+                self.released = False
+
+            def isOpened(self):
+                return not self.released
+
+            def set(self, _prop, _value):
+                return True
+
+            def get(self, prop):
+                if prop == cv2.CAP_PROP_FOURCC:
+                    value = "YUYV" if self.backend == cv2.CAP_V4L2 else "MJPG"
+                    return cv2.VideoWriter_fourcc(*value)
+                if prop == cv2.CAP_PROP_FRAME_WIDTH:
+                    return 1280
+                if prop == cv2.CAP_PROP_FRAME_HEIGHT:
+                    return 720
+                if prop == cv2.CAP_PROP_FPS:
+                    return 10 if self.backend == cv2.CAP_V4L2 else 15
+                return 0
+
+            def read(self):
+                return True, np.zeros((720, 1280, 3), dtype=np.uint8)
+
+            def release(self):
+                self.released = True
+
+        stream = ThreadedVideoStream(
+            src=0,
+            width=1280,
+            height=720,
+            target_fps=15,
+            fourcc="MJPG",
+        )
+        with patch("platform.system", return_value="Linux"), patch(
+            "cv2.VideoCapture", side_effect=FakeCapture
+        ):
+            grabbed, _ = stream._open_usb_camera(0)
+
+        self.assertTrue(grabbed)
+        self.assertEqual(attempted_backends, [cv2.CAP_V4L2, cv2.CAP_ANY])
+        self.assertEqual(stream.negotiated_fourcc, "MJPG")
+        self.assertEqual(stream.negotiated_fps, 15.0)
+
     def test_rtsp_uses_open_and_read_timeouts(self):
         opened_with = []
 

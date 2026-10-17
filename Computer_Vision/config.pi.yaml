@@ -50,6 +50,11 @@ source:
   width: 1280
 ui:
   jpeg_quality: 60
+  # AI/ReID still use the full 1280x720 frame. Only the browser stream is
+  # downscaled to save Pi CPU and memory bandwidth, so inference accuracy is unchanged.
+  stream_width: 960
+  stream_height: 540
+  max_display_fps: 10
   show_fps: true
   show_trail: false
   trail_length: 30

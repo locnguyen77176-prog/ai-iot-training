@@ -153,6 +153,10 @@ class AIEngineWorker:
             95,
             max(35, int(self.cfg.get("ui", {}).get("jpeg_quality", 68))),
         )
+        ui_cfg = self.cfg.get("ui", {})
+        self.stream_width = max(320, int(ui_cfg.get("stream_width", 960)))
+        self.stream_height = max(180, int(ui_cfg.get("stream_height", 540)))
+        self.max_display_fps = max(1.0, float(ui_cfg.get("max_display_fps", 10.0)))
 
         self.latest_encoded_frame = None
         self.frame_seq = 0
@@ -162,10 +166,14 @@ class AIEngineWorker:
         self.render_event = threading.Event()
         self.latest_render_packet = None
         self.render_seq = 0
+        self.stream_clients = 0
+        self.stream_clients_lock = threading.Lock()
         self.running = False
         self.fps = 0.0
         self.ai_fps = 0.0
         self.display_fps = 0.0
+        self.pipeline_latency_ms = 0.0
+        self.render_latency_ms = 0.0
         self.is_cuda = (
             backend == "pytorch" and torch is not None and torch.cuda.is_available()
             and "cuda" in det_cfg.get("device", "cuda:0")
@@ -180,6 +188,19 @@ class AIEngineWorker:
     def is_active(self) -> bool:
         """Kiểm tra camera và AI pipeline có đang chạy không"""
         return self.running and self.video_stream.is_connected
+
+    def register_stream_client(self) -> None:
+        with self.stream_clients_lock:
+            self.stream_clients += 1
+        self.render_event.set()
+
+    def unregister_stream_client(self) -> None:
+        with self.stream_clients_lock:
+            self.stream_clients = max(0, self.stream_clients - 1)
+
+    def has_stream_clients(self) -> bool:
+        with self.stream_clients_lock:
+            return self.stream_clients > 0
 
     def switch_source(self, new_src: Union[int, str], source_type: str = "webcam"):
         """Chuyển đổi nguồn đầu vào giữa Webcam máy tính và Video file tải lên, tự động bật camera"""
@@ -249,6 +270,7 @@ class AIEngineWorker:
         last_capture_sequence = None
         last_capture_time = None
         while self.running:
+            pipeline_started = time.perf_counter()
             capture = self.video_stream.read_packet(last_capture_sequence)
             if capture is None:
                 time.sleep(0.005)
@@ -348,11 +370,18 @@ class AIEngineWorker:
                 self.latest_render_packet = packet
                 self.render_seq += 1
             self.render_event.set()
+            pipeline_ms = (time.perf_counter() - pipeline_started) * 1000.0
+            with self.lock:
+                self.pipeline_latency_ms = (
+                    pipeline_ms if self.pipeline_latency_ms <= 0
+                    else 0.8 * self.pipeline_latency_ms + 0.2 * pipeline_ms
+                )
 
     def _render_loop(self):
         """Render overlays and JPEG independently so browser work never blocks AI inference."""
         last_render_seq = -1
         display_timestamps = deque(maxlen=90)
+        next_encode_at = 0.0
         while self.running:
             if not self.render_event.wait(timeout=0.1):
                 continue
@@ -363,6 +392,20 @@ class AIEngineWorker:
             if packet is None or render_seq == last_render_seq:
                 continue
             last_render_seq = render_seq
+
+            if not self.has_stream_clients():
+                next_encode_at = 0.0
+                continue
+
+            now = time.perf_counter()
+            render_interval = 1.0 / self.max_display_fps
+            jitter_tolerance = render_interval * 0.20
+            if next_encode_at > 0 and now + jitter_tolerance < next_encode_at:
+                continue
+            if next_encode_at <= 0 or now - next_encode_at > render_interval * 2:
+                next_encode_at = now
+            next_encode_at += render_interval
+            render_started = now
 
             frame = packet["frame"]
             self.visualizer.draw_zones(
@@ -376,6 +419,13 @@ class AIEngineWorker:
                 frame, packet["total_in"], packet["total_out"],
                 packet["ai_fps"], is_cuda=self.is_cuda,
             )
+
+            if frame.shape[1] != self.stream_width or frame.shape[0] != self.stream_height:
+                frame = cv2.resize(
+                    frame,
+                    (self.stream_width, self.stream_height),
+                    interpolation=cv2.INTER_AREA,
+                )
 
             ret, buffer = cv2.imencode(
                 '.jpg',
@@ -398,6 +448,11 @@ class AIEngineWorker:
                 self.latest_encoded_frame = buffer.tobytes()
                 self.frame_seq += 1
                 self.display_fps = round(display_fps, 1)
+                render_ms = (time.perf_counter() - render_started) * 1000.0
+                self.render_latency_ms = (
+                    render_ms if self.render_latency_ms <= 0
+                    else 0.8 * self.render_latency_ms + 0.2 * render_ms
+                )
             self.new_frame_event.set()
 
     def get_frame_synchronized(self, last_seq: int, timeout: float = 0.08) -> Tuple[Optional[bytes], int]:
@@ -532,18 +587,34 @@ def video_feed():
     """Luồng video MJPEG siêu mượt: Đồng bộ theo từng frame kết xuất, triệt tiêu frame trùng lặp"""
     def generate():
         last_seq = -1
-        while True:
-            global ai_worker
-            if ai_worker is not None and ai_worker.is_active():
-                frame_bytes, last_seq = ai_worker.get_frame_synchronized(last_seq, timeout=0.08)
-                if frame_bytes is not None:
+        registered_worker = None
+        try:
+            while True:
+                global ai_worker
+                current_worker = ai_worker
+                if current_worker is not registered_worker:
+                    if registered_worker is not None:
+                        registered_worker.unregister_stream_client()
+                    registered_worker = current_worker
+                    if registered_worker is not None:
+                        registered_worker.register_stream_client()
+
+                if current_worker is not None and current_worker.is_active():
+                    frame_bytes, last_seq = current_worker.get_frame_synchronized(
+                        last_seq,
+                        timeout=0.08,
+                    )
+                    if frame_bytes is not None:
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        continue
+                else:
                     yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                    continue
-            else:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + STANDBY_FRAME_BYTES + b'\r\n')
-                time.sleep(0.4)
+                           b'Content-Type: image/jpeg\r\n\r\n' + STANDBY_FRAME_BYTES + b'\r\n')
+                    time.sleep(0.4)
+        finally:
+            if registered_worker is not None:
+                registered_worker.unregister_stream_client()
 
     return StreamingResponse(
         generate(),
@@ -578,9 +649,34 @@ def get_camera_status():
         "fps": fps,
         "ai_fps": ai_worker.ai_fps if active else 0.0,
         "display_fps": ai_worker.display_fps if active else 0.0,
+        "source_fps": ai_worker.video_stream.fps if active else 0.0,
+        "camera_fourcc": (
+            ai_worker.video_stream.negotiated_fourcc if active else ""
+        ),
+        "camera_width": (
+            ai_worker.video_stream.negotiated_width if active else 0
+        ),
+        "camera_height": (
+            ai_worker.video_stream.negotiated_height if active else 0
+        ),
+        "camera_negotiated_fps": (
+            ai_worker.video_stream.negotiated_fps if active else 0.0
+        ),
+        "pipeline_latency_ms": (
+            round(ai_worker.pipeline_latency_ms, 1) if active else 0.0
+        ),
+        "render_latency_ms": (
+            round(ai_worker.render_latency_ms, 1) if active else 0.0
+        ),
         "detector_fps": ai_worker.tracker.detector_fps if active else 0.0,
         "detector_latency_ms": (
             ai_worker.tracker.detector_latency_ms if active else 0.0
+        ),
+        "reid_latency_ms": (
+            ai_worker.tracker.reid_latency_ms if active else 0.0
+        ),
+        "reid_batch_size": (
+            ai_worker.tracker.reid_last_batch_size if active else 0
         ),
         "source": source_val,
         "source_type": source_type,

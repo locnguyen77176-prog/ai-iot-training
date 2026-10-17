@@ -495,6 +495,8 @@ class YOLOTracker:
         self._detector_timestamps = deque(maxlen=30)
         self._detector_fps = 0.0
         self._detector_latency_ms = 0.0
+        self._reid_latency_ms = 0.0
+        self._reid_last_batch_size = 0
         self._detector_result_applied = False
         self._detector_reid_frame: Optional[np.ndarray] = None
         self._detector_reid_tracks: List[Dict[str, object]] = []
@@ -513,6 +515,7 @@ class YOLOTracker:
                 detector_process_ready,
                 initialize_detector_process,
                 prepare_detector_input,
+                prepare_detector_input_into,
             )
 
             detector_param = _resolve_project_path(ncnn_detector_param)
@@ -537,6 +540,7 @@ class YOLOTracker:
                 self.model = None
                 self._detector_callable = detect_shared_in_process
                 self._detector_preprocessor = prepare_detector_input
+                self._detector_preprocessor_into = prepare_detector_input_into
                 detector_shape = (self.imgsz, self.imgsz, 3)
                 detector_bytes = int(np.prod(detector_shape))
                 try:
@@ -759,8 +763,16 @@ class YOLOTracker:
         self._detector_future_generation = self._detector_generation
         self._detector_last_submit_sequence = self._ncnn_sequence
         preprocess_started = time.perf_counter()
-        detector_input, transform = self._detector_preprocessor(frame, self.imgsz)
-        np.copyto(self._detector_input_view, detector_input, casting="no")
+        preprocess_into = getattr(self, "_detector_preprocessor_into", None)
+        if preprocess_into is not None:
+            transform = preprocess_into(
+                frame,
+                self.imgsz,
+                self._detector_input_view,
+            )
+        else:
+            detector_input, transform = self._detector_preprocessor(frame, self.imgsz)
+            np.copyto(self._detector_input_view, detector_input, casting="no")
         preprocess_ms = (time.perf_counter() - preprocess_started) * 1000.0
         # Keep the full-resolution, unannotated frame locally for OSNet. Only the
         # 320x320 tensor lives in shared memory and crosses into the YOLO worker.
@@ -901,7 +913,15 @@ class YOLOTracker:
                     reid_frame.shape,
                 )
             requests = self._select_reid_requests(reid_tracks)
+            reid_started = time.perf_counter()
             reid_features = self.reid_encoder.extract(reid_frame, requests)
+            if requests:
+                reid_ms = (time.perf_counter() - reid_started) * 1000.0
+                self._reid_latency_ms = (
+                    reid_ms if self._reid_latency_ms <= 0
+                    else 0.8 * self._reid_latency_ms + 0.2 * reid_ms
+                )
+            self._reid_last_batch_size = len(requests)
             for local_id in reid_features:
                 self._reid_last_sample[local_id] = self._frame_index
         self._detector_reid_frame = None
@@ -935,6 +955,14 @@ class YOLOTracker:
     def detector_latency_ms(self) -> float:
         return round(self._detector_latency_ms, 1)
 
+    @property
+    def reid_latency_ms(self) -> float:
+        return round(self._reid_latency_ms, 1)
+
+    @property
+    def reid_last_batch_size(self) -> int:
+        return self._reid_last_batch_size
+
     def reset(self) -> None:
         """Xóa trạng thái khi đổi nguồn để ID nguồn cũ không rò sang nguồn mới."""
         self.identity.reset()
@@ -948,6 +976,8 @@ class YOLOTracker:
             self._detector_timestamps.clear()
             self._detector_fps = 0.0
             self._detector_latency_ms = 0.0
+            self._reid_latency_ms = 0.0
+            self._reid_last_batch_size = 0
             self._detector_result_applied = False
             self._detector_reid_frame = None
             self._detector_reid_tracks = []

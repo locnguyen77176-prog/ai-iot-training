@@ -75,18 +75,40 @@ def prepare_detector_input(
     frame: np.ndarray, imgsz: int
 ) -> Tuple[np.ndarray, LetterboxTransform]:
     """Create the fixed detector tensor before crossing the process boundary."""
+    canvas = np.empty((int(imgsz), int(imgsz), 3), dtype=np.uint8)
+    transform = prepare_detector_input_into(frame, imgsz, canvas)
+    return canvas, transform
+
+
+def prepare_detector_input_into(
+    frame: np.ndarray,
+    imgsz: int,
+    output: np.ndarray,
+) -> LetterboxTransform:
+    """Letterbox directly into a reusable/shared buffer without an extra 300 KiB copy."""
     if frame is None or frame.size == 0:
         raise ValueError("Cannot preprocess an empty detector frame")
+    expected_shape = (int(imgsz), int(imgsz), 3)
+    if output.shape != expected_shape or output.dtype != np.uint8:
+        raise ValueError(
+            f"Expected uint8 detector output {expected_shape}, got "
+            f"{output.dtype} {output.shape}"
+        )
     height, width = frame.shape[:2]
     ratio = min(float(imgsz) / width, float(imgsz) / height)
     resized_w = max(1, int(round(width * ratio)))
     resized_h = max(1, int(round(height * ratio)))
-    resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR)
     pad_x = (int(imgsz) - resized_w) // 2
     pad_y = (int(imgsz) - resized_h) // 2
-    canvas = np.full((int(imgsz), int(imgsz), 3), 114, dtype=np.uint8)
-    canvas[pad_y:pad_y + resized_h, pad_x:pad_x + resized_w] = resized
-    return np.ascontiguousarray(canvas), (height, width, ratio, pad_x, pad_y)
+    output.fill(114)
+    destination = output[pad_y:pad_y + resized_h, pad_x:pad_x + resized_w]
+    cv2.resize(
+        frame,
+        (resized_w, resized_h),
+        dst=destination,
+        interpolation=cv2.INTER_LINEAR,
+    )
+    return height, width, ratio, pad_x, pad_y
 
 
 def initialize_detector_process(

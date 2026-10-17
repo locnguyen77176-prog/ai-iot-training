@@ -92,6 +92,10 @@ class ThreadedVideoStream:
         self.target_fps = requested_fps if requested_fps > 0 else 0.0
         requested_fourcc = str(fourcc or "").strip().upper()
         self.fourcc = requested_fourcc if len(requested_fourcc) == 4 else ""
+        self.negotiated_fourcc = ""
+        self.negotiated_width = 0
+        self.negotiated_height = 0
+        self.negotiated_fps = 0.0
         self.flip_horizontal = bool(flip_horizontal)
 
         glare_cfg = dict(anti_glare or {})
@@ -287,7 +291,7 @@ class ThreadedVideoStream:
             # V4L2 negotiates FOURCC/resolution/FPS consistently on Raspberry Pi.
             backends = [("V4L2", cv2.CAP_V4L2), ("Auto", cv2.CAP_ANY)]
 
-        for backend_name, backend in backends:
+        for backend_index, (backend_name, backend) in enumerate(backends):
             self._release_capture()
             try:
                 self.cap = cv2.VideoCapture(camera_index, backend)
@@ -325,11 +329,39 @@ class ThreadedVideoStream:
                             actual_fps = float(get_property(cv2.CAP_PROP_FPS))
                         except (TypeError, ValueError, cv2.error):
                             pass
+                    normalized_fourcc = actual_fourcc.strip().upper()
+                    format_matches = (
+                        (not self.fourcc or normalized_fourcc == self.fourcc)
+                        and (not self.width or actual_width == int(self.width))
+                        and (not self.height or actual_height == int(self.height))
+                        and (
+                            self.target_fps <= 0
+                            or actual_fps <= 0
+                            or actual_fps + 0.5 >= self.target_fps
+                        )
+                    )
                     print(
                         f"[VideoStream] Negotiated camera format: "
                         f"{actual_fourcc or 'unknown'} {actual_width}x{actual_height} "
                         f"@ {actual_fps:.1f} FPS."
                     )
+                    if not format_matches and backend_index + 1 < len(backends):
+                        print(
+                            f"[VideoStream] Backend {backend_name} did not honor the "
+                            f"requested {self.fourcc or 'default'} "
+                            f"{self.width or 0}x{self.height or 0} @ "
+                            f"{self.target_fps:.1f} FPS; trying the next backend."
+                        )
+                        continue
+                    if not format_matches:
+                        print(
+                            "[VideoStream] WARNING: camera format fallback is active; "
+                            "performance may be lower than configured."
+                        )
+                    self.negotiated_fourcc = normalized_fourcc
+                    self.negotiated_width = int(actual_width)
+                    self.negotiated_height = int(actual_height)
+                    self.negotiated_fps = float(actual_fps)
                     print(f"[VideoStream] Camera USB đang dùng backend {backend_name}.")
                     return True, frame
             except cv2.error:
@@ -392,6 +424,10 @@ class ThreadedVideoStream:
             self.is_connected = False
             self.grabbed = False
             self.frame = None
+            self.negotiated_fourcc = ""
+            self.negotiated_width = 0
+            self.negotiated_height = 0
+            self.negotiated_fps = 0.0
             return False
         except Exception as exc:
             print(f"[VideoStream] Ngoại lệ khi mở stream: {exc}")
@@ -400,6 +436,10 @@ class ThreadedVideoStream:
             self.is_connected = False
             self.grabbed = False
             self.frame = None
+            self.negotiated_fourcc = ""
+            self.negotiated_width = 0
+            self.negotiated_height = 0
+            self.negotiated_fps = 0.0
             return False
 
     def start(self):
