@@ -1,0 +1,7 @@
+path: D:/ai-iot-training/Computer_Vision/datasets/person_gate_v1
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: person

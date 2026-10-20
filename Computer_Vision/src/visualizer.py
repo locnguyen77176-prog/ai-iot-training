@@ -161,32 +161,36 @@ class Visualizer:
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1, cv2.LINE_AA)
 
             # 2. Vẽ 4 góc chữ L nổi bật (Corner Brackets)
-            corner_len = max(8, min(22, int(min(w, h) * 0.20)))
-            cv2.line(frame, (x1, y1), (x1 + corner_len, y1), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x1, y1), (x1, y1 + corner_len), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x2, y1), (x2 - corner_len, y1), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x2, y1), (x2, y1 + corner_len), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x1, y2), (x1 + corner_len, y2), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x1, y2), (x1, y2 - corner_len), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x2, y2), (x2 - corner_len, y2), color, 3, cv2.LINE_AA)
-            cv2.line(frame, (x2, y2), (x2, y2 - corner_len), color, 3, cv2.LINE_AA)
+            corner_len = max(5, min(14, int(min(w, h) * 0.12)))
+            cv2.line(frame, (x1, y1), (x1 + corner_len, y1), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x1, y1), (x1, y1 + corner_len), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x2, y1), (x2 - corner_len, y1), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x2, y1), (x2, y1 + corner_len), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x1, y2), (x1 + corner_len, y2), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x1, y2), (x1, y2 - corner_len), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x2, y2), (x2 - corner_len, y2), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (x2, y2), (x2, y2 - corner_len), color, 1, cv2.LINE_AA)
 
             # 3. Vẽ ĐIỂM NEO TIẾP ĐẤT BƯỚC CHÂN (Ground Footstep Anchor)
-            cv2.circle(frame, (cx, feet_y), 7, color, 2, cv2.LINE_AA)
-            cv2.circle(frame, (cx, feet_y), 3, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.line(frame, (cx - 10, feet_y), (cx + 10, feet_y), color, 1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, feet_y), 4, color, 1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, feet_y), 1, (255, 255, 255), -1, cv2.LINE_AA)
+            cv2.line(frame, (cx - 6, feet_y), (cx + 6, feet_y), color, 1, cv2.LINE_AA)
 
             # 4. Thẻ nhãn định danh ID trên đỉnh đầu (HUD Header Pill)
-            (text_w, text_h), baseline = cv2.getTextSize(status_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            label_scale = 0.34
+            (text_w, text_h), baseline = cv2.getTextSize(
+                status_label, cv2.FONT_HERSHEY_SIMPLEX, label_scale, 1
+            )
             tag_x1 = max(0, x1)
-            tag_y1 = max(0, y1 - text_h - 8)
-            tag_x2 = tag_x1 + text_w + 10
-            tag_y2 = max(text_h + 8, y1)
+            tag_y1 = max(0, y1 - text_h - 5)
+            tag_x2 = tag_x1 + text_w + 6
+            tag_y2 = max(text_h + 5, y1)
 
             cv2.rectangle(frame, (tag_x1, tag_y1), (tag_x2, tag_y2), (20, 24, 30), -1)
             cv2.rectangle(frame, (tag_x1, tag_y1), (tag_x2, tag_y2), color, 1, cv2.LINE_AA)
-            cv2.putText(frame, status_label, (tag_x1 + 5, tag_y2 - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(frame, status_label, (tag_x1 + 3, tag_y2 - 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, label_scale,
+                        (255, 255, 255), 1, cv2.LINE_AA)
 
         return frame
 
