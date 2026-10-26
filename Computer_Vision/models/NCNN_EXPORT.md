@@ -87,3 +87,37 @@ SHA-256:
 A6A7495293BAB72EF2F30775A4686A2FA7A99143337CE9E120EFD3ACC7A2551A  model.ncnn.bin
 33A863FA9411D779DD91762FE8480A8182FA65081D880015536F0DA1C1B2C997  yolo26n_320_aciq.table
 ```
+
+## YOLO26n person v1 320x320 INT8 (production candidate)
+
+- Source: `runs/detect/runs/person_gate/yolo26n_person_v1/weights/best.pt`
+- Source task: one class, `person`
+- Input: `[1, 3, 320, 320]`, RGB, values scaled by `1/255`
+- Output: `[1, 5, 2100]`
+- Output path: `yolo26n_person_v1_320_ncnn_int8/`
+- Calibration: ACIQ, 989 images sampled only from the training split
+- Quantized layers: 94 convolution and 8 depthwise convolution layers
+- FP32 weights: 9,584,548 bytes
+- INT8 weights: 2,475,496 bytes (74.2% smaller)
+- NCNN application smoke test: passed
+
+Accuracy on the fixed 400-image test split:
+
+| Model | Precision | Recall | mAP50 | mAP50-95 |
+|---|---:|---:|---:|---:|
+| Fine-tuned PyTorch `best.pt` | 0.828 | 0.708 | 0.808 | 0.488 |
+| NCNN FP32 export | 0.820 | 0.689 | 0.784 | 0.469 |
+| NCNN INT8 ACIQ | 0.769 | 0.665 | 0.760 | 0.431 |
+
+The ACIQ table is selected because the tested KL table produced materially
+lower recall. The Pi deployment configuration points to this model. Keep the
+FP32 NCNN export as the accuracy fallback if the measured Pi speed gain does
+not justify the INT8 accuracy loss.
+
+SHA-256:
+
+```text
+567DE4FE4DEB723B750AD9E16C8AE27A0636E40377E4810B6C8831B401E19D73  model.ncnn.param
+36D9F01BA27C0640DE484F1B9407ED66D78F2EB3C48482440D4828127528F4BB  model.ncnn.bin
+0D89C96494EA69BBBEF0CE6C08D563E81A74E6DA13C2037BEA797A65D535A6F6  yolo26n_person_v1_320_aciq.table
+```

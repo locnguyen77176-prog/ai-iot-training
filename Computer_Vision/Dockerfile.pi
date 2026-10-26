@@ -34,8 +34,8 @@ RUN python -m pip install --no-cache-dir --no-deps /tmp/ncnn-*.whl && rm /tmp/nc
 COPY . .
 RUN chmod +x /app/docker/entrypoint.sh \
     && python -c "import cv2, ncnn, numpy, yaml; print('Runtime imports OK')" \
-    && test -s models/yolo26n_320_ncnn_int8/model.ncnn.param \
-    && test -s models/yolo26n_320_ncnn_int8/model.ncnn.bin \
+    && test -s models/yolo26n_person_v1_320_ncnn_int8/model.ncnn.param \
+    && test -s models/yolo26n_person_v1_320_ncnn_int8/model.ncnn.bin \
     && test -s models/osnet_x0_25_ncnn_model/model.ncnn.param \
     && test -s models/osnet_x0_25_ncnn_model/model.ncnn.bin
 

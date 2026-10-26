@@ -16,8 +16,9 @@ import cv2
 import numpy as np
 
 
-YOLO_OUTPUT_CHANNELS = 84
-PERSON_CLASS_SCORE_ROW = 4
+YOLO_BOX_CHANNELS = 4
+DEFAULT_YOLO_CLASS_COUNT = 80
+PERSON_CLASS_SCORE_ROW = YOLO_BOX_CHANNELS
 OSNET_EMBEDDING_SIZE = 512
 NUMERIC_EPSILON = 1e-7
 _PROCESS_DETECTOR = None
@@ -270,27 +271,37 @@ class NcnnYoloDetector:
         self.input_blob = input_blob
         self.output_blob = output_blob
         self.num_threads = max(1, int(num_threads))
+        metadata = _read_model_metadata(param_path)
+        names = metadata.get("names")
+        if isinstance(names, dict):
+            class_count = len(names)
+        elif isinstance(names, (list, tuple)):
+            class_count = len(names)
+        else:
+            class_count = DEFAULT_YOLO_CLASS_COUNT
+        if class_count < 1:
+            raise ValueError(f"Invalid class count in NCNN metadata: {class_count}")
+        self.output_channels = YOLO_BOX_CHANNELS + class_count
         self.ncnn, self.net = _load_net(param_path, bin_path, self.num_threads, use_vulkan)
 
     def _letterbox(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
         image, (_, _, ratio, pad_x, pad_y) = prepare_detector_input(frame, self.imgsz)
         return image, ratio, pad_x, pad_y
 
-    @staticmethod
-    def _as_predictions(output: np.ndarray) -> np.ndarray:
+    def _as_predictions(self, output: np.ndarray) -> np.ndarray:
         array = np.asarray(output, dtype=np.float32).squeeze()
         if array.ndim == 1:
-            if array.size % YOLO_OUTPUT_CHANNELS != 0:
+            if array.size % self.output_channels != 0:
                 raise RuntimeError(f"Unexpected YOLO output size: {array.size}")
-            array = array.reshape(YOLO_OUTPUT_CHANNELS, -1)
+            array = array.reshape(self.output_channels, -1)
         elif array.ndim != 2:
             raise RuntimeError(f"Unexpected YOLO output shape: {array.shape}")
-        if array.shape[0] == YOLO_OUTPUT_CHANNELS:
+        if array.shape[0] == self.output_channels:
             return array
-        if array.shape[1] == YOLO_OUTPUT_CHANNELS:
+        if array.shape[1] == self.output_channels:
             return array.T
         raise RuntimeError(
-            f"Expected one YOLO output dimension to be {YOLO_OUTPUT_CHANNELS}, "
+            f"Expected one YOLO output dimension to be {self.output_channels}, "
             f"got {array.shape}"
         )
 
@@ -324,7 +335,9 @@ class NcnnYoloDetector:
             raise RuntimeError(f"NCNN input('{self.input_blob}') failed with code {input_ret}")
         predictions = self._as_predictions(_extract(extractor, self.output_blob))
 
-        # Exported YOLO26 output is [cx, cy, w, h, 80 class probabilities].
+        # Exported YOLO26 output is [cx, cy, w, h, class probabilities].
+        # Both the original 80-class COCO model and the fine-tuned one-class
+        # person model are supported; class 0 is person in both models.
         scores = predictions[PERSON_CLASS_SCORE_ROW]
         selected = scores >= self.conf
         if not np.any(selected):

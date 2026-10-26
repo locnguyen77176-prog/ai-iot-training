@@ -11,8 +11,8 @@ if [[ "${ARCH}" != "aarch64" && "${ARCH}" != "arm64" ]]; then
 fi
 
 for model_file in \
-  models/yolo26n_320_ncnn_int8/model.ncnn.param \
-  models/yolo26n_320_ncnn_int8/model.ncnn.bin \
+  models/yolo26n_person_v1_320_ncnn_int8/model.ncnn.param \
+  models/yolo26n_person_v1_320_ncnn_int8/model.ncnn.bin \
   models/osnet_x0_25_ncnn_model/model.ncnn.param \
   models/osnet_x0_25_ncnn_model/model.ncnn.bin
 do

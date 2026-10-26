@@ -1,0 +1,37 @@
+description: Fine-tuned YOLO26n single-class person detector, NCNN INT8 for Raspberry Pi 4
+source: runs/detect/runs/person_gate/yolo26n_person_v1/weights/best.pt
+source_sha256: 0BFD66B7BBA839921AAA70CA6F2B7C3F8653B60078DEDCEA36F2FD8B5BD94BDC
+source_param_sha256: 98EBAF1F1FA5E959704A2A322972618B59B1089DCABB3B88C8AFD6A07E4F50D1
+source_bin_sha256: C7D602619FC95266CD6A01D889ABB552AC6299E737968081E27FF2FDBDC4EBEF
+param_sha256: 567DE4FE4DEB723B750AD9E16C8AE27A0636E40377E4810B6C8831B401E19D73
+bin_sha256: 36D9F01BA27C0640DE484F1B9407ED66D78F2EB3C48482440D4828127528F4BB
+table_sha256: 0D89C96494EA69BBBEF0CE6C08D563E81A74E6DA13C2037BEA797A65D535A6F6
+quantizer: ncnn-20260526
+precision: int8
+task: detect
+batch: 1
+imgsz: [320, 320]
+channels: 3
+stride: 32
+input_blob: in0
+output_blob: out0
+output_shape: [1, 5, 2100]
+end2end: false
+nms_in_graph: false
+names:
+  0: person
+preprocessing:
+  color: RGB
+  scale: 0.00392156862745098
+  letterbox: true
+  letterbox_color: 114
+calibration:
+  method: aciq
+  image_count: 989
+  source: datasets/person_gate_v1/images/train
+  convolution_layers_int8: 94
+  depthwise_layers_int8: 8
+postprocessing:
+  class_filter: [0]
+  confidence_threshold: 0.25
+  iou_threshold: 0.60

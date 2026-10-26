@@ -79,10 +79,16 @@ class NcnnPostprocessTests(unittest.TestCase):
         np.testing.assert_array_equal(actual, expected)
 
     def test_accepts_both_common_yolo_output_layouts(self):
+        detector = NcnnYoloDetector.__new__(NcnnYoloDetector)
+        detector.output_channels = 84
         channels_first = np.zeros((1, 84, 8400), dtype=np.float32)
         candidates_first = np.zeros((1, 8400, 84), dtype=np.float32)
-        self.assertEqual(NcnnYoloDetector._as_predictions(channels_first).shape, (84, 8400))
-        self.assertEqual(NcnnYoloDetector._as_predictions(candidates_first).shape, (84, 8400))
+        self.assertEqual(detector._as_predictions(channels_first).shape, (84, 8400))
+        self.assertEqual(detector._as_predictions(candidates_first).shape, (84, 8400))
+
+        detector.output_channels = 5
+        single_class = np.zeros((1, 5, 2100), dtype=np.float32)
+        self.assertEqual(detector._as_predictions(single_class).shape, (5, 2100))
 
     def test_nms_removes_heavily_overlapping_box(self):
         boxes = np.asarray([[0, 0, 100, 100], [5, 5, 98, 98], [150, 0, 230, 100]], dtype=np.float32)
