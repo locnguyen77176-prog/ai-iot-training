@@ -4,6 +4,9 @@
 .ruff_cache
 .ipynb_checkpoints
 .venv
+.venv-*/
+venv/
+env/
 __pycache__
 *.pyc
 .env
@@ -21,11 +24,17 @@ config.local.yml
 *.torchscript
 *.safetensors
 datasets
+datasets/
 dist
 scratch
 scratch_benchmark
 scratch_review
 benchmark_results
+custom_runs/
+runs/
+cvat_exports/
+cvat_packages/
+sss/
 tests
 weights
 uploads/*
